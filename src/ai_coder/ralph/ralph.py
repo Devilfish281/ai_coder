@@ -117,12 +117,15 @@ def i_ralph_run(
     agent_provider: AgentProvider | None = None,
     max_iterations: int = 3,
     prompt_path: str | Path | None = None,
+    repo_path: str | Path | None = None,  #  Added Code
 ) -> RalphResult:
     logger.info("Starting RALPH run...")
 
     # 1. Start with a Git repository.
     logger.info("Step 1: Start with a Git repository.")
-    repository_result = i_repository_start()
+
+    repository_result = i_repository_start(repo_path or setup_config.repo_path)
+
     logger.info(repository_result.message)
 
     # 2. Read open GitHub issues.

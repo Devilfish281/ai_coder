@@ -226,3 +226,11 @@ This project follows its own development workflow. See the main prompt for detai
 
 poetry run ai-coder
 poetry run python -m ai_coder
+
+## Release 1 runtime contract
+
+The Release 1 command, CLI flags, setup config fields, fake agent behavior, and commit message format are documented in:
+
+```text
+docs/release_1_runtime_contract.md
+```
