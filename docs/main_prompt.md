@@ -116,27 +116,56 @@ Do not add unnecessary dependencies.
 ### The big architecture picture
 
 ```
-User runs Sandcastle
+### The big architecture picture
+
+User runs AI coder with a prompt or prompt file
+(ai_coder.__main__ / ai_coder.main)
         |
         v
-Read prompt / prompt file
+Load configuration and logging
+(ai_coder.setup_config / ai_coder.display)
+        |
+        v
+Resolve prompt text from inline input or a prompt file
+(ai_coder.prompt_resolver)
+        |
+        v
+Preprocess prompt placeholders
+(ai_coder.prompt_preprocessor)
+        |
+        v
+Read open GitHub issues
+(ai_coder.github_issues)
+        |
+        v
+Select one actionable issue
+(ai_coder.github_issues)
+        |
+        v
+Start the high-level RALPH workflow
+(ai_coder.ralph)
         |
         v
 Create Git worktree / branch
+(ai_coder.worktree_manager)
         |
         v
 Start sandbox provider
-(Docker, Podman, Vercel, Daytona, etc.)
+(ai_coder.sandbox_provider)
+(Docker, Future: Podman, Vercel, Daytona, etc.)
         |
         v
 Run lifecycle hooks
+(ai_coder.ralph / future lifecycle_hooks module)
         |
         v
 Start AI agent
-(Claude Code, Codex, Pi, OpenCode)
+(ai_coder.agent_provider)
+(Claude Code, Codex, Pi, OpenCode, local mock)
         |
         v
-Orchestrator loops:
+Orchestrator loops
+(ai_coder.orchestrator):
   - send prompt
   - stream output
   - parse text/tool calls/result
@@ -145,14 +174,19 @@ Orchestrator loops:
         |
         v
 Collect commits
+(ai_coder.sync_out / ai_coder.worktree_manager)
         |
         v
 Sync changes back to host repo
+(ai_coder.sync_out)
         |
         v
 Merge or preserve branch/worktree
+(ai_coder.worktree_manager)
         |
         v
+Clean up safely
+(ai_coder.worktree_manager / ai_coder.sandbox_provider)
 Clean up safely
 ```
 
