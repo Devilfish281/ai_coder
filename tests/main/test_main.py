@@ -1,12 +1,18 @@
 import ai_coder.main.main as main_module
+import ai_coder.ralph.ralph as ralph_module
 from ai_coder.main import main
 from ai_coder.setup_config import c_setup_config
 
 
 def _refresh_main_config() -> None:
     c_setup_config._instance = None
-    main_module.setup_config = c_setup_config.get_instance()
-    main_module.logger = main_module.setup_config.get_logger()
+    refreshed_config = c_setup_config.get_instance()
+
+    main_module.setup_config = refreshed_config
+    main_module.logger = refreshed_config.get_logger()
+
+    ralph_module.setup_config = refreshed_config
+    ralph_module.logger = refreshed_config.get_logger()
 
 
 def test_main_runs_default_fake_issue(capsys, monkeypatch) -> None:
