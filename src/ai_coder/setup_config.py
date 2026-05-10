@@ -22,20 +22,33 @@ except Exception:
     pass
 
 
+# 2026\Projects\ai_hello\d
+###############################################################################
+# Constants
+###############################################################################
 LOGGER_PROJECT_NAME = "AI_CODER"
-DEFAULT_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "prompt.md"
-DEFAULT_GITHUB_ISSUE_PATH = DEFAULT_PROMPT_PATH.with_name("github_issue.md")
-
-DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_PROJECT_NAME = "AI Code"
+# GitHub
+DEFAULT_GITHUB_REPO = "Devilfish281/ai_coder"
 DEFAULT_DOCKER_IMAGE_NAME = "ai-code-ralph-test-runtime:latest"
-DEFAULT_RALPH_DOCKERFILE_PATH = (
-    DEFAULT_PROJECT_ROOT / "docker" / "ralph-test-runtime" / "Dockerfile"
-)
 
+DEFAULT_AGENT_NAME = "mock"
+DEFAULT_TEST_COMMAND = "poetry run pytest"
+DEFAULT_COMMIT_MESSAGE_TEMPLATE = "RALPH: issue #{issue_number} - {issue_title}"
+###############################################################################
+# Paths
+###############################################################################
+# Directory structure:
+# - project_root/
+DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_RALPH__PATH = DEFAULT_PROJECT_ROOT / ".ai_coder"
+# Paths
+DEFAULT_PROMPT_PATH = DEFAULT_RALPH__PATH / "prompt.md"
+DEFAULT_GITHUB_ISSUE_PATH = DEFAULT_RALPH__PATH / "github_issue.md"
+DEFAULT_RALPH_DOCKERFILE_PATH = DEFAULT_RALPH__PATH / "Dockerfile"
 
 DEFAULT_DOCKER_BUILD_COMMAND = (
-    "docker build -f docker/ralph-test-runtime/Dockerfile "
-    "-t ai-code-ralph-test-runtime:latest ."
+    "docker build -f .ai_coder/Dockerfile " "-t ai-code-ralph-test-runtime:latest ."
 )
 
 
@@ -104,6 +117,65 @@ class c_setup_config(BaseModel):
             "Empty by default for the first Docker tracer bullet."
         ),
     )
+
+    ###########################################################################
+    # Other
+    ###########################################################################
+    project_name: str = Field(
+        default_factory=lambda: c_setup_config.get_env(
+            "PROJECT_NAME",
+            DEFAULT_PROJECT_NAME,
+        ),
+        description="Human-readable project name.",
+    )
+
+    repo_path: Path = Field(
+        default_factory=lambda: Path(
+            c_setup_config.get_env(
+                "REPO_PATH",
+                str(DEFAULT_PROJECT_ROOT),
+            )
+        ),
+        description="Local Git repository path RALPH should work from.",
+    )
+
+    github_repo: str = Field(
+        default_factory=lambda: c_setup_config.get_env(
+            "GITHUB_REPO",
+            DEFAULT_GITHUB_REPO,
+        ),
+        description="GitHub owner/repository name.",
+    )
+
+    default_agent: str = Field(
+        default_factory=lambda: c_setup_config.get_env(
+            "RALPH_AGENT",
+            DEFAULT_AGENT_NAME,
+        ),
+        description="Release 1 agent provider name. Only 'mock' is supported now.",
+    )
+
+    dry_run: bool = Field(
+        default_factory=lambda: c_setup_config.env_bool("DRY_RUN", True),
+        description="Safety mode. Release 1 should default to dry-run behavior.",
+    )
+
+    test_command: str = Field(
+        default_factory=lambda: c_setup_config.get_env(
+            "TEST_COMMAND",
+            DEFAULT_TEST_COMMAND,
+        ),
+        description="Command used to verify RALPH changes.",
+    )
+
+    commit_message_template: str = Field(
+        default_factory=lambda: c_setup_config.get_env(
+            "COMMIT_MESSAGE_TEMPLATE",
+            DEFAULT_COMMIT_MESSAGE_TEMPLATE,
+        ),
+        description="Template for future successful RALPH commit messages.",
+    )
+
     ###########################################################################
     # user GitHub Issue for RALPH
     ###########################################################################
@@ -265,6 +337,30 @@ class c_setup_config(BaseModel):
 
         self.validate_sandbox_mode()
 
+        if not self.project_name.strip():
+            logger.error("PROJECT_NAME cannot be empty.")
+            raise ValueError("PROJECT_NAME cannot be empty.")
+
+        if not self.repo_path.exists():
+            logger.error("REPO_PATH does not exist: %s", self.repo_path)
+            raise ValueError(f"REPO_PATH does not exist: {self.repo_path}")
+
+        if not self.github_repo.strip():
+            logger.error("GITHUB_REPO cannot be empty.")
+            raise ValueError("GITHUB_REPO cannot be empty.")
+
+        if self.default_agent.strip().lower() != "mock":
+            logger.error("RALPH_AGENT must be 'mock' for Release 1.")
+            raise ValueError("RALPH_AGENT must be 'mock' for Release 1.")
+
+        if not self.test_command.strip():
+            logger.error("TEST_COMMAND cannot be empty.")
+            raise ValueError("TEST_COMMAND cannot be empty.")
+
+        if not self.commit_message_template.strip():
+            logger.error("COMMIT_MESSAGE_TEMPLATE cannot be empty.")
+            raise ValueError("COMMIT_MESSAGE_TEMPLATE cannot be empty.")
+
         if self.has_user_github_issue():
             if self.issue_number < 1:
                 logger.error(
@@ -354,6 +450,13 @@ class c_setup_config(BaseModel):
             "docker_build_command": self.get_docker_build_command(),
             "docker_env_allowlist": list(self.docker_env_allowlist),
             "docker_secret_env_allowlist": list(self.docker_secret_env_allowlist),
+            "project_name": self.project_name,
+            "repo_path": str(self.repo_path),
+            "github_repo": self.github_repo,
+            "default_agent": self.default_agent,
+            "dry_run": self.dry_run,
+            "test_command": self.test_command,
+            "commit_message_template": self.commit_message_template,
         }
 
     def get_docker_build_command(self) -> str:

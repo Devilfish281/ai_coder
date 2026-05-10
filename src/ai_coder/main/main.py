@@ -15,6 +15,8 @@ load_dotenv_once()
 setup_config = c_setup_config.get_instance()
 logger = setup_config.get_logger()
 
+RELEASE_1_AGENT_CHOICES = ("mock",)
+
 
 def main(
     argv: Sequence[str] | None = None,
@@ -36,17 +38,17 @@ def main(
         "--issue-number",
         type=int,
         default=setup_config.issue_number,
-        help="Fake issue number for the local tracer-bullet run.",
+        help="GitHub issue number for the local tracer-bullet run..",
     )
     parser.add_argument(
         "--issue-title",
         default=setup_config.issue_title,
-        help="Fake issue title for the local tracer-bullet run.",
+        help="GitHub issue title for the local tracer-bullet run.",
     )
     parser.add_argument(
         "--issue-body",
         default=setup_config.issue_body,
-        help="Fake issue body for the local tracer-bullet run.",
+        help="GitHub issue body for the local tracer-bullet run.",
     )
     parser.add_argument(
         "--label",
@@ -65,6 +67,29 @@ def main(
         default=setup_config.prompt_path,
         help="Path to the RALPH prompt markdown file.",
     )
+
+    parser.add_argument(
+        "--github-issue-path",  #  Added Code
+        default=setup_config.github_issue_path,  #  Added Code
+        help="Path to the local fallback GitHub issue markdown file.",  #  Added Code
+    )  #  Added Code
+    parser.add_argument(
+        "--repo-path",  #  Added Code
+        default=setup_config.repo_path,  #  Added Code
+        help="Path to the local Git repository RALPH should use.",  #  Added Code
+    )  #  Added Code
+    parser.add_argument(
+        "--agent",  #  Added Code
+        choices=RELEASE_1_AGENT_CHOICES,  #  Added Code
+        default=setup_config.default_agent,  #  Added Code
+        help="Agent provider to use. Release 1 supports only 'mock'.",  #  Added Code
+    )  #  Added Code
+    parser.add_argument(
+        "--dry-run",  #  Added Code
+        action=argparse.BooleanOptionalAction,  #  Added Code
+        default=setup_config.dry_run,  #  Added Code
+        help="Run safely without real issue-closing or destructive actions.",  #  Added Code
+    )  #  Added Code
 
     parser.add_argument(
         "--sandbox",
@@ -142,6 +167,7 @@ def main(
         issues,
         max_iterations=setup_config.max_iterations,
         prompt_path=setup_config.prompt_path,
+        repo_path=setup_config.repo_path,
     )
 
     if result.selected_issue is None:
@@ -176,6 +202,17 @@ def _validate_cli_args_before_apply(
     if args.max_iterations < 1:
         return "Error: --max-iterations must be at least 1."
 
+    repo_path = Path(args.repo_path)  #  Added Code
+    if not repo_path.exists():  #  Added Code
+        return f"Error: --repo-path does not exist: {repo_path}"  #  Added Code
+
+    prompt_path = Path(args.prompt_path)  #  Added Code
+    if not prompt_path.exists():  #  Added Code
+        return f"Error: --prompt-path does not exist: {prompt_path}"  #  Added Code
+
+    if args.agent.strip().lower() not in RELEASE_1_AGENT_CHOICES:  #  Added Code
+        return "Error: --agent must be 'mock' for Release 1."  #  Added Code
+
     user_issue_was_provided = _has_user_issue_args(args)
 
     if user_issue_was_provided and args.issue_number < 1:
@@ -205,6 +242,10 @@ def _apply_cli_args_to_setup_config(args: argparse.Namespace) -> None:
     setup_config.label = args.label
     setup_config.max_iterations = args.max_iterations
     setup_config.prompt_path = Path(args.prompt_path)
+    setup_config.github_issue_path = Path(args.github_issue_path)  #  Added Code
+    setup_config.repo_path = Path(args.repo_path)  #  Added Code
+    setup_config.default_agent = args.agent.strip().lower()  #  Added Code
+    setup_config.dry_run = bool(args.dry_run)  #  Added Code
 
     sandbox_mode = getattr(args, "sandbox", None)
     if sandbox_mode is not None and hasattr(setup_config, "sandbox_mode"):
