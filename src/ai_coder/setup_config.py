@@ -256,7 +256,13 @@ class c_setup_config(BaseModel):
         raw = os.getenv(name)
         if raw is None or not raw.strip():
             return default
-        return int(raw.strip().strip("'\""))
+
+        cleaned_value = raw.strip().strip("'\"")
+
+        try:
+            return int(cleaned_value)
+        except ValueError as error:
+            raise ValueError(f"{name} must be an integer.") from error
 
     @staticmethod
     def resolve_github_issue_path() -> Path:
@@ -457,6 +463,7 @@ class c_setup_config(BaseModel):
             "dry_run": self.dry_run,
             "test_command": self.test_command,
             "commit_message_template": self.commit_message_template,
+            "sandbox_mode": self.sandbox_mode,
         }
 
     def get_docker_build_command(self) -> str:
@@ -483,11 +490,19 @@ class c_setup_config(BaseModel):
             f"max_iterations={self.max_iterations!r}, "
             f"prompt_path={str(self.prompt_path)!r}, "
             f"github_issue_path={str(self.github_issue_path)!r}, "
-            f"logger={'Initialized' if self.logger else 'Not Initialized'}, "
-            f"llm={'Initialized' if self.llm else 'Not Initialized'}",
+            f"project_name={self.project_name!r}, "
+            f"repo_path={str(self.repo_path)!r}, "
+            f"github_repo={self.github_repo!r}, "
+            f"default_agent={self.default_agent!r}, "
+            f"dry_run={self.dry_run!r}, "
+            f"test_command={self.test_command!r}, "
+            f"commit_message_template={self.commit_message_template!r}, "
+            f"sandbox_mode={self.sandbox_mode!r}, "
             f"docker_image_name={self.docker_image_name!r}, "
             f"ralph_dockerfile_path={str(self.ralph_dockerfile_path)!r}, "
-            ")",
+            f"logger={'Initialized' if self.logger else 'Not Initialized'}, "
+            f"llm={'Initialized' if self.llm else 'Not Initialized'}"
+            ")"
         )
 
     ###########################################################################

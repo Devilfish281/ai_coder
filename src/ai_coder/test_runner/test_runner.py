@@ -19,13 +19,15 @@ class TestRunResult:
 
 
 def i_test_runner_run(
-    command: tuple[str, ...] = ("poetry", "run", "pytest")
+    command: tuple[str, ...] | None = None,
 ) -> TestRunResult:
     logger.info("Starting test runner.")
-    logger.info(f"Received test command: {command}")
+    resolved_command = command or tuple(setup_config.test_command.split())
+
+    logger.info(f"Received test command: {resolved_command}")
     logger.info("Test running is stubbed in this tracer-bullet slice.")
     return TestRunResult(
         passed=True,
-        command=command,
+        command=resolved_command,
         message="Test running is stubbed in this tracer-bullet slice.",
     )
