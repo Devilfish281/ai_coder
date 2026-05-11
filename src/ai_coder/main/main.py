@@ -21,13 +21,13 @@ RELEASE_1_AGENT_CHOICES = ("mock",)
 def main(
     argv: Sequence[str] | None = None,
 ) -> int:
-    use_logger = argv is None
-    _write_info("Starting ai-coder...", use_logger)
+    use_logger_t = argv is None
+    _write_info("Starting ai-coder...", use_logger=use_logger_t)
 
     try:
         setup_config.validate_initialization()
     except ValueError as error:
-        _write_error(f"Configuration error: {error}", use_logger)
+        _write_error(f"Configuration error: {error}", use_logger=use_logger_t)
         return 1
 
     parser = argparse.ArgumentParser(
@@ -103,7 +103,7 @@ def main(
 
     cli_error = _validate_cli_args_before_apply(args)
     if cli_error is not None:
-        _write_error(cli_error, use_logger)
+        _write_error(cli_error, use_logger=use_logger_t)
         return 1
     ###########################################################################
     # Write CLI args into setup_config.py.
@@ -118,19 +118,19 @@ def main(
     try:
         setup_config.validate_initialization()
     except ValueError as error:
-        _write_error(f"Configuration error: {error}", use_logger)
+        _write_error(f"Configuration error: {error}", use_logger=use_logger_t)
         return 1
 
     if setup_config.issue_number > 1000:
         _write_warning(
             "Warning: issue_number is unusually high for a local tracer-bullet run.",
-            use_logger,
+            use_logger=use_logger_t,
         )
 
     if len(setup_config.issue_title) > 100:
         _write_warning(
             "Warning: issue_title is quite long for a local tracer-bullet run.",
-            use_logger,
+            use_logger=use_logger_t,
         )
     ###########################################################################
     # BUILDING A FAKE ISSUE AND RUNNING RALPH LOCALLY
@@ -163,29 +163,79 @@ def main(
         else None
     )
 
+    logger.info(
+        "Start RALPH with issue: %s, title: %s, body length: %d, label: %s",
+        issues[0].number if issues else "N/A",
+        issues[0].title if issues else "N/A",
+        len(issues[0].body) if issues else 0,
+        issues[0].labels if issues else "N/A",
+    )
+
+    _write_info(
+        "Using max_iterations: %d",
+        setup_config.max_iterations,
+        use_logger=use_logger_t,
+    )
+    _write_info(
+        "Using repository path: %s",
+        setup_config.repo_path,
+        use_logger=use_logger_t,
+    )
+    _write_info(
+        "Using prompt path: %s",
+        setup_config.prompt_path,
+        use_logger=use_logger_t,
+    )
     result = i_ralph_run(
         issues,
         max_iterations=setup_config.max_iterations,
         prompt_path=setup_config.prompt_path,
         repo_path=setup_config.repo_path,
     )
+    _write_info("#" * 80, use_logger=use_logger_t)
+    _write_info("RALPH run completed.", use_logger=use_logger_t)
+    _write_info("#" * 80, use_logger=use_logger_t)
+    _write_info("#" * 80, use_logger=use_logger_t)
+
+    _write_info(
+        f"RALPH selected issue #{result.selected_issue.number if result.selected_issue else 'N/A'}: {result.selected_issue.title if result.selected_issue else 'N/A'}",
+        use_logger=use_logger_t,
+    )
+
+    _write_info(f"RALPH final prompt:\n{result.prompt}", use_logger=use_logger_t)
+
+    _write_info(
+        f"RALPH orchestrator iterations: {result.orchestrator_result.iterations if result.orchestrator_result else 'N/A'}",
+        use_logger=use_logger_t,
+    )
+
+    _write_info(
+        f"RALPH orchestrator final output:\n{result.orchestrator_result.final_output if result.orchestrator_result else 'N/A'}",
+        use_logger=use_logger_t,
+    )
+
+    _write_info(f"RALPH completed: {result.completed}", use_logger=use_logger_t)
+    _write_info(f"RALPH message: {result.message}", use_logger=use_logger_t)
 
     if result.selected_issue is None:
-        _write_error(result.message, use_logger)
+        _write_error(
+            "RALPH did not select any issue to work on.", use_logger=use_logger_t
+        )
+        _write_error(result.message, use_logger=use_logger_t)
         return 1
 
     _write_info(
         f"Selected issue #{result.selected_issue.number}: {result.selected_issue.title}",
-        use_logger,
+        use_logger=use_logger_t,
     )
-    _write_info(result.message, use_logger)
+    _write_info(result.message, use_logger=use_logger_t)
 
     if result.orchestrator_result is not None:
         _write_info(
             f"Iterations: {result.orchestrator_result.iterations}",
-            use_logger,
+            use_logger=use_logger_t,
         )
-        _write_info(result.orchestrator_result.final_output, use_logger)
+        _write_info(result.orchestrator_result.final_output, use_logger=use_logger_t)
 
     return 0 if result.completed else 1
 
@@ -260,28 +310,50 @@ def _has_user_issue_args(args: argparse.Namespace) -> bool:
     )
 
 
-def _write_info(message: str, use_logger: bool) -> None:
+def _write_info(
+    message: str,
+    *message_args: object,
+    use_logger: bool,
+) -> None:
     if use_logger:
-        logger.info(message)
+        logger.info(message, *message_args)
         return
 
-    print(message)
+    print(_format_message(message, message_args))
 
 
-def _write_warning(message: str, use_logger: bool) -> None:
+def _write_warning(
+    message: str,
+    *message_args: object,
+    use_logger: bool,
+) -> None:
     if use_logger:
-        logger.warning(message)
+        logger.warning(message, *message_args)
         return
 
-    print(message)
+    print(_format_message(message, message_args))
 
 
-def _write_error(message: str, use_logger: bool) -> None:
+def _write_error(
+    message: str,
+    *message_args: object,
+    use_logger: bool,
+) -> None:
     if use_logger:
-        logger.error(message)
+        logger.error(message, *message_args)
         return
 
-    print(message)
+    print(_format_message(message, message_args))
+
+
+def _format_message(
+    message: str,
+    message_args: tuple[object, ...],
+) -> str:
+    if not message_args:
+        return message
+
+    return message % message_args
 
 
 def _build_fake_issue_from_config() -> GitHubIssue:

@@ -1,3 +1,4 @@
+# src/ai_coder/github_issues/github_issues.py
 from __future__ import annotations
 
 import json
@@ -5,6 +6,14 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
+
+# logger & setup_config
+from ai_coder.setup_config import c_setup_config
+from ai_coder.my_utils.env_loader import load_dotenv_once
+
+load_dotenv_once()
+setup_config = c_setup_config.get_instance()
+logger = setup_config.get_logger()
 
 
 @dataclass(frozen=True)
@@ -78,6 +87,8 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
 
 
 def i_github_issue_select(issues: Iterable[GitHubIssue]) -> GitHubIssue | None:
+    logger.info("START: Selecting issue from list of %d issues.", len(list(issues)))
+    logger.info("Selecting issue from list of %d issues.", len(list(issues)))
     issue_list = list(issues)
     open_issue_numbers = {
         issue.number for issue in issue_list if issue.state.lower() == "open"
@@ -101,13 +112,23 @@ def i_github_issue_close(
     tests_passed: bool,
     committed: bool,
 ) -> GitHubIssueCloseResult:
+    logger.info("Starting GitHub issue closing process.")
+    logger.info(f"Issue number: {issue.number}")
+    logger.info(f"Tests passed: {tests_passed}")
+    logger.info(f"Committed work confirmed: {committed}")
     if tests_passed and committed:
+        logger.info(
+            "Tests have passed and committed work is confirmed. Closing the issue."
+        )
         return GitHubIssueCloseResult(
             issue_number=issue.number,
             closed=False,
             message="GitHub issue closing is stubbed in this tracer-bullet slice.",
         )
 
+    logger.info(
+        "Tests have not passed or committed work is not confirmed. Issue will not be closed."
+    )
     return GitHubIssueCloseResult(
         issue_number=issue.number,
         closed=False,

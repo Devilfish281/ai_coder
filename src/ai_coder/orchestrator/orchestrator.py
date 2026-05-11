@@ -4,6 +4,14 @@ from dataclasses import dataclass
 
 from ai_coder.agent_provider import AgentProvider, COMPLETE_TOKEN
 
+# logger & setup_config
+from ai_coder.setup_config import c_setup_config
+from ai_coder.my_utils.env_loader import load_dotenv_once
+
+load_dotenv_once()
+setup_config = c_setup_config.get_instance()
+logger = setup_config.get_logger()
+
 
 @dataclass(frozen=True)
 class OrchestratorResult:
@@ -20,15 +28,18 @@ def i_orchestrator_run(
     max_iterations: int = 3,
     completion_token: str = COMPLETE_TOKEN,
 ) -> OrchestratorResult:
+    logger.info("Starting orchestrator run.")
     if max_iterations < 1:
         raise ValueError("max_iterations must be at least 1")
 
     outputs: list[str] = []
 
     for iteration_number in range(1, max_iterations + 1):
+        logger.info(f"Orchestrator iteration {iteration_number} \n")
         response = agent_provider.i_agent_provider_run(prompt)
 
         if response.error is not None:
+            logger.info("Error detected in agent response.")
             return OrchestratorResult(
                 completed=False,
                 iterations=iteration_number,
@@ -37,9 +48,16 @@ def i_orchestrator_run(
                 error=response.error,
             )
 
+        logger.info(f"Agent response output: {response.output}")
         outputs.append(response.output)
 
+        logger.info(f"Total outputs collected so far: {len(outputs)}")
+        logger.info("Collecting all agent outputs...")
+        for idx, output in enumerate(outputs, start=1):
+            logger.info(f"Output {idx}: {output}")
+
         if completion_token in response.output:
+            logger.info("Completion token detected in agent response.")
             return OrchestratorResult(
                 completed=True,
                 iterations=iteration_number,

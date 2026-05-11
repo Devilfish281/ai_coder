@@ -3,6 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+# logger & setup_config
+from ai_coder.setup_config import c_setup_config
+from ai_coder.my_utils.env_loader import load_dotenv_once
+
+load_dotenv_once()
+setup_config = c_setup_config.get_instance()
+logger = setup_config.get_logger()
+
 
 @dataclass(frozen=True)
 class SyncOutResult:
@@ -26,12 +34,16 @@ def i_sync_out_run(source_path: str | Path, target_path: str | Path) -> SyncOutR
 
 
 def i_sync_out_merge(completed: bool) -> SyncMergeResult:
+    logger.info("Starting sync or merge process.")
     if completed:
+        logger.info("Sync or merge is stubbed in this tracer-bullet slice.")
         return SyncMergeResult(
             merged=False,
             message="Sync or merge is stubbed in this tracer-bullet slice.",
         )
 
+    logger.info("Error occurred.")
+    logger.info("Skipping sync or merge because RALPH did not complete.")
     return SyncMergeResult(
         merged=False,
         message="Skipped sync or merge because RALPH did not complete.",

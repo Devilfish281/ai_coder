@@ -69,3 +69,6 @@ Thumbs.db
 .DS_Store
 
 chat_gpt/
+
+# Local AI Coder worktrees
+.ai_coder/ai_coder_worktrees/

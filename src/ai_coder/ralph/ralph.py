@@ -131,6 +131,15 @@ def i_ralph_run(
     # 2. Read open GitHub issues.
     logger.info("Step 2: Read open GitHub issues.")
     resolved_issues = _resolve_issue_source(issues, setup_config)
+    logger.info(
+        f"Resolved {len(resolved_issues)} open GitHub issues to consider for this run."
+    )
+    logger.info(f"Issue numbers: {[issue.number for issue in resolved_issues]}")
+    logger.info(f"Issue titles: {[issue.title for issue in resolved_issues]}")
+    logger.info(f"Issue labels: {[issue.labels for issue in resolved_issues]}")
+    logger.info(f"Issue states: {[issue.state for issue in resolved_issues]}")
+    logger.info(f"Issue bodies: {[issue.body for issue in resolved_issues]}")
+    logger.info(f"Issue blocked_by: {[issue.blocked_by for issue in resolved_issues]}")
 
     # 3. Pick one actionable issue.
     logger.info("Step 3: Pick one actionable issue.")
@@ -144,6 +153,7 @@ def i_ralph_run(
             completed=False,
             message="No open actionable issue selected.",
         )
+    logger.info(f"Selected issue #{selected_issue.number}: {selected_issue.title}")
 
     # 4. Create a safe working copy using a Git worktree.
     logger.info("Step 4: Create a safe working copy using a Git worktree.")
@@ -171,12 +181,19 @@ def i_ralph_run(
 
     # 6b. Preprocess prompt after sandbox is ready.
     logger.info("Step 6b: Preprocess prompt after sandbox is ready.")
+    logger.info(f"Raw prompt template before preprocessing:\n{raw_prompt_template}")
+    logger.info(
+        f"Selected issue for prompt preprocessing: #{selected_issue.number} - {selected_issue.title}"
+    )
     prompt = _preprocess_prompt_after_sandbox_ready(
         raw_prompt_template=raw_prompt_template,
         selected_issue=selected_issue,
     )
+    logger.info(f"Final prompt after preprocessing:\n{prompt}")
 
     selected_agent_provider = agent_provider or MockAgentProvider()
+
+    logger.info(f"Using agent provider: {selected_agent_provider.__class__.__name__}")
 
     # 7. Let the agent edit files, run commands, and commit changes.
     logger.info("Step 7: Let the agent edit files, run commands, and commit changes.")
@@ -186,19 +203,41 @@ def i_ralph_run(
         max_iterations=max_iterations,
     )
 
+    logger.info(
+        "Orchestrator result: completed=%s, iterations=%d, error=%s",  #  Changed Code
+        orchestrator_result.completed,  #  Added Code
+        orchestrator_result.iterations,  #  Added Code
+        orchestrator_result.error,  #  Added Code
+    )  #  Added Code
+    logger.info(
+        "Final agent output: %s", orchestrator_result.final_output
+    )  #  Changed Code
+    logger.info("All agent outputs: %s", orchestrator_result.outputs)  #  Changed Code
+    logger.info(  #  Added Code
+        "Agent provider used: %s",  #  Added Code
+        selected_agent_provider.__class__.__name__,  #  Added Code
+    )  #  Added Code
+    # logger.info(f"Prompt given to agent: {prompt}")
+
     # 8. Detect whether the task is complete.
     logger.info("Step 8: Detect whether the task is complete.")
     completion_result = i_completion_detector_detect(orchestrator_result.completed)
+
     logger.info(completion_result.message)
 
     # 9. Run tests.
     logger.info("Step 9: Run tests.")
     test_result = i_test_runner_run()
+
+    logger.info(f"Tests passed: {test_result.passed}")
+    logger.info(f"Test command: {test_result.command}")
+
     logger.info(test_result.message)
 
     # 10. Sync or merge the finished work back to the host repo.
     logger.info("Step 10: Sync or merge the finished work back to the host repo.")
     sync_result = i_sync_out_merge(orchestrator_result.completed)
+
     logger.info(sync_result.message)
 
     # 11. Close the GitHub issue only after tests pass and the fix is committed.
@@ -210,6 +249,10 @@ def i_ralph_run(
         tests_passed=test_result.passed,
         committed=sync_result.merged,
     )
+
+    logger.info(
+        f"Close issue result: Issue #{close_result.issue_number} closed: {close_result.closed}"
+    )
     logger.info(close_result.message)
 
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
@@ -220,20 +263,28 @@ def i_ralph_run(
         completed=orchestrator_result.completed,
         has_uncommitted_changes=False,
     )
+
+    logger.info(f"Worktree preserved: {preserve_result.preserved}")
     logger.info(preserve_result.reason)
 
-    ############################################################
+    message_result = (
+        "RALPH completed the selected issue."
+        if orchestrator_result.completed
+        else "RALPH stopped before completion."
+    )
+
+    logger.info(f"Selected issue: #{selected_issue.number} - {selected_issue.title}")
+    # logger.info(f"Prompt given to agent:\n{prompt}")
+    logger.info(f"Orchestrator result: {orchestrator_result}")
+    logger.info(f"Completion detected: {completion_result.completed}")
+    logger.info(f"Message: {message_result}")
 
     return RalphResult(
         selected_issue=selected_issue,
         prompt=prompt,
         orchestrator_result=orchestrator_result,
         completed=orchestrator_result.completed,
-        message=(
-            "RALPH completed the selected issue."
-            if orchestrator_result.completed
-            else "RALPH stopped before completion."
-        ),
+        message=message_result,
     )
 
 
@@ -241,16 +292,21 @@ def _resolve_issue_source(
     issues: Iterable[GitHubIssue] | None,
     setup_config: c_setup_config,
 ) -> tuple[GitHubIssue, ...]:
+    logger.info("START: Resolving issue source...")
     if issues is not None:
+        logger.info("Using provided issues from User arguments.")
         return tuple(issues)
 
     if setup_config.testing_flag:
+        logger.info("Using test GitHub issue.")
         return (_build_test_github_issue(setup_config),)
 
     if setup_config.has_user_github_issue():
+        logger.info("Using user-provided GitHub issue.")
         return (_build_user_github_issue(setup_config),)
 
     if setup_config.github_issue_path.exists():
+        logger.info("Using GitHub issue from file.")
         return (
             i_github_issue_from_file(
                 setup_config.github_issue_path,
@@ -258,6 +314,7 @@ def _resolve_issue_source(
             ),
         )
 
+    logger.info("Using GitHub issues from the API.")
     return i_github_issue_list(label=setup_config.label)
 
 

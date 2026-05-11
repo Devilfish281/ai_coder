@@ -18,6 +18,16 @@ Confirm the Release 1 command, flags, config fields, fake/test agent behavior, a
 
 Confirm the small set of Release 1 decisions that affect every later implementation slice: start command, CLI flags, setup_config fields, fake/test agent behavior, and commit message format.
 
+## Confirmed Release 1 runtime contract
+
+### Release 1 CLI command
+
+The Release 1 command is:
+
+```powershell
+poetry run ai-coder
+
+
 ## Acceptance criteria
 
 - [ ] The Release 1 CLI command is chosen and documented.
@@ -51,3 +61,4 @@ None - can start immediately.
 ## Notes
 
 - This is intentionally HITL because later issues depend on these choices.
+```

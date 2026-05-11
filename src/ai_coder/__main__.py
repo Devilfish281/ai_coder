@@ -1,9 +1,8 @@
+# src/ai_coder/__main__.py
 from __future__ import annotations
 
-# Use package imports (remove top-level 'src' prefix)
+# logger & setup_config
 from ai_coder.setup_config import c_setup_config
-
-# Load environment helpers from package
 from ai_coder.my_utils.env_loader import load_dotenv_once
 
 load_dotenv_once()

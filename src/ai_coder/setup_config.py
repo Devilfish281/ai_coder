@@ -41,11 +41,11 @@ DEFAULT_COMMIT_MESSAGE_TEMPLATE = "RALPH: issue #{issue_number} - {issue_title}"
 # Directory structure:
 # - project_root/
 DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_RALPH__PATH = DEFAULT_PROJECT_ROOT / ".ai_coder"
+DEFAULT_RALPH__PATH = DEFAULT_PROJECT_ROOT
 # Paths
-DEFAULT_PROMPT_PATH = DEFAULT_RALPH__PATH / "prompt.md"
-DEFAULT_GITHUB_ISSUE_PATH = DEFAULT_RALPH__PATH / "github_issue.md"
-DEFAULT_RALPH_DOCKERFILE_PATH = DEFAULT_RALPH__PATH / "Dockerfile"
+DEFAULT_PROMPT_PATH = DEFAULT_RALPH__PATH / ".ai_coder" / "prompt.md"
+DEFAULT_GITHUB_ISSUE_PATH = DEFAULT_RALPH__PATH / ".ai_coder" / "github_issue.md"
+DEFAULT_RALPH_DOCKERFILE_PATH = DEFAULT_RALPH__PATH / ".ai_coder" / "Dockerfile"
 
 DEFAULT_DOCKER_BUILD_COMMAND = (
     "docker build -f .ai_coder/Dockerfile " "-t ai-code-ralph-test-runtime:latest ."
@@ -133,7 +133,7 @@ class c_setup_config(BaseModel):
         default_factory=lambda: Path(
             c_setup_config.get_env(
                 "REPO_PATH",
-                str(DEFAULT_PROJECT_ROOT),
+                str(DEFAULT_RALPH__PATH),
             )
         ),
         description="Local Git repository path RALPH should work from.",
