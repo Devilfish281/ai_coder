@@ -109,6 +109,7 @@ class RalphResult:
     orchestrator_result: OrchestratorResult | None
     completed: bool
     message: str
+    status: str = "incomplete"  #  Added Code
 
 
 def i_ralph_run(
@@ -117,7 +118,7 @@ def i_ralph_run(
     agent_provider: AgentProvider | None = None,
     max_iterations: int = 3,
     prompt_path: str | Path | None = None,
-    repo_path: str | Path | None = None,  #  Added Code
+    repo_path: str | Path | None = None,
 ) -> RalphResult:
     logger.info("Starting RALPH run...")
 
@@ -128,7 +129,22 @@ def i_ralph_run(
 
     logger.info(repository_result.message)
 
-    # 2. Read open GitHub issues.
+    if not repository_result.ready:
+        logger.info(
+            "Repository context is blocked. RALPH will stop before issue selection."
+        )
+
+        return RalphResult(
+            selected_issue=None,
+            prompt="",
+            orchestrator_result=None,
+            completed=False,
+            message=repository_result.message,
+            status="blocked",  #  Added Code
+        )
+
+    logger.info("Step 2: Read open GitHub issues.")
+
     logger.info("Step 2: Read open GitHub issues.")
     resolved_issues = _resolve_issue_source(issues, setup_config)
     logger.info(
@@ -152,6 +168,7 @@ def i_ralph_run(
             orchestrator_result=None,
             completed=False,
             message="No open actionable issue selected.",
+            status="incomplete",  #  Added Code
         )
     logger.info(f"Selected issue #{selected_issue.number}: {selected_issue.title}")
 
@@ -205,18 +222,18 @@ def i_ralph_run(
 
     logger.info(
         "Orchestrator result: completed=%s, iterations=%d, error=%s",  #  Changed Code
-        orchestrator_result.completed,  #  Added Code
-        orchestrator_result.iterations,  #  Added Code
-        orchestrator_result.error,  #  Added Code
-    )  #  Added Code
+        orchestrator_result.completed,
+        orchestrator_result.iterations,
+        orchestrator_result.error,
+    )
     logger.info(
         "Final agent output: %s", orchestrator_result.final_output
     )  #  Changed Code
     logger.info("All agent outputs: %s", orchestrator_result.outputs)  #  Changed Code
-    logger.info(  #  Added Code
-        "Agent provider used: %s",  #  Added Code
-        selected_agent_provider.__class__.__name__,  #  Added Code
-    )  #  Added Code
+    logger.info(
+        "Agent provider used: %s",
+        selected_agent_provider.__class__.__name__,
+    )
     # logger.info(f"Prompt given to agent: {prompt}")
 
     # 8. Detect whether the task is complete.
@@ -285,6 +302,9 @@ def i_ralph_run(
         orchestrator_result=orchestrator_result,
         completed=orchestrator_result.completed,
         message=message_result,
+        status=(
+            "complete" if orchestrator_result.completed else "incomplete"
+        ),  #  Added Code
     )
 
 
