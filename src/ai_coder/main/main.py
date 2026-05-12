@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from ai_coder.github_issues import GitHubIssue
@@ -18,17 +19,32 @@ logger = setup_config.get_logger()
 RELEASE_1_AGENT_CHOICES = ("mock",)
 
 
+@dataclass(frozen=True)
+class CliConfigOverrides:
+    issue_number: int
+    issue_title: str
+    issue_body: str
+    label: str
+    max_iterations: int
+    prompt_path: Path
+    github_issue_path: Path
+    repo_path: Path
+    agent: str
+    dry_run: bool
+    sandbox_mode: str
+
+
 def main(
     argv: Sequence[str] | None = None,
 ) -> int:
     use_logger_t = argv is None
     _write_info("Starting ai-coder...", use_logger=use_logger_t)
 
-    try:
-        setup_config.validate_initialization()
-    except ValueError as error:
-        _write_error(f"Configuration error: {error}", use_logger=use_logger_t)
-        return 1
+    # try:
+    #     setup_config.validate_initialization()
+    # except ValueError as error:
+    #     _write_error(f"Configuration error: {error}", use_logger=use_logger_t)
+    #     return 1
 
     parser = argparse.ArgumentParser(
         prog="ai-coder",
@@ -38,7 +54,7 @@ def main(
         "--issue-number",
         type=int,
         default=setup_config.issue_number,
-        help="GitHub issue number for the local tracer-bullet run..",
+        help="GitHub issue number for the local tracer-bullet run....",
     )
     parser.add_argument(
         "--issue-title",
@@ -69,31 +85,31 @@ def main(
     )
 
     parser.add_argument(
-        "--github-issue-path",  #  Added Code
-        default=setup_config.github_issue_path,  #  Added Code
-        help="Path to the local fallback GitHub issue markdown file.",  #  Added Code
-    )  #  Added Code
+        "--github-issue-path",
+        default=setup_config.github_issue_path,
+        help="Path to the local fallback GitHub issue markdown file.",
+    )
     parser.add_argument(
-        "--repo-path",  #  Added Code
-        default=setup_config.repo_path,  #  Added Code
-        help="Path to the local Git repository RALPH should use.",  #  Added Code
-    )  #  Added Code
+        "--repo-path",
+        default=setup_config.repo_path,
+        help="Path to the local Git repository RALPH should use.",
+    )
+
     parser.add_argument(
-        "--agent",  #  Added Code
-        choices=RELEASE_1_AGENT_CHOICES,  #  Added Code
-        default=setup_config.default_agent,  #  Added Code
-        help="Agent provider to use. Release 1 supports only 'mock'.",  #  Added Code
-    )  #  Added Code
+        "--agent",
+        default=setup_config.default_agent,
+        help="Agent provider to use. Release 1 supports only 'mock'.",
+    )
+
     parser.add_argument(
-        "--dry-run",  #  Added Code
-        action=argparse.BooleanOptionalAction,  #  Added Code
-        default=setup_config.dry_run,  #  Added Code
-        help="Run safely without real issue-closing or destructive actions.",  #  Added Code
-    )  #  Added Code
+        "--dry-run",
+        action=argparse.BooleanOptionalAction,
+        default=setup_config.dry_run,
+        help="Run safely without real issue-closing or destructive actions.",
+    )
 
     parser.add_argument(
         "--sandbox",
-        choices=["local", "docker"],
         default=getattr(setup_config, "sandbox_mode", "local"),
         help="Set RALPH sandbox mode in setup_config.py.",
     )
@@ -101,10 +117,13 @@ def main(
     # Parse the command-line arguments
     args = parser.parse_args(argv)
 
-    cli_error = _validate_cli_args_before_apply(args)
+    cli_overrides = _cli_overrides_from_args(args)
+
+    cli_error = _validate_cli_overrides_before_apply(cli_overrides)  #  Changed Code
     if cli_error is not None:
         _write_error(cli_error, use_logger=use_logger_t)
         return 1
+
     ###########################################################################
     # Write CLI args into setup_config.py.
     #
@@ -113,7 +132,7 @@ def main(
     #   setup_config.py is the program truth.
     #   After this point, main.py reads values from setup_config only.
     ###########################################################################
-    _apply_cli_args_to_setup_config(args)
+    _apply_cli_overrides_to_setup_config(cli_overrides)
 
     try:
         setup_config.validate_initialization()
@@ -240,73 +259,84 @@ def main(
     return 0 if result.completed else 1
 
 
-def _validate_cli_args_before_apply(
-    args: argparse.Namespace,
+def _cli_overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
+    return CliConfigOverrides(
+        issue_number=args.issue_number,
+        issue_title=args.issue_title,
+        issue_body=args.issue_body,
+        label=args.label,
+        max_iterations=args.max_iterations,
+        prompt_path=Path(args.prompt_path),
+        github_issue_path=Path(args.github_issue_path),
+        repo_path=Path(args.repo_path),
+        agent=args.agent.strip().lower(),
+        dry_run=bool(args.dry_run),
+        sandbox_mode=args.sandbox.strip().lower(),
+    )
+
+
+def _validate_cli_overrides_before_apply(
+    cli_overrides: CliConfigOverrides,
 ) -> str | None:
-    """Validate CLI args before mutating setup_config.py.
+    """Validate CLI overrides before mutating setup_config.py."""
 
-    CLI args are still only user input.
-    setup_config.py remains the runtime source of truth after valid args are applied.
-    """
-
-    if args.max_iterations < 1:
+    if cli_overrides.max_iterations < 1:
         return "Error: --max-iterations must be at least 1."
 
-    repo_path = Path(args.repo_path)  #  Added Code
-    if not repo_path.exists():  #  Added Code
-        return f"Error: --repo-path does not exist: {repo_path}"  #  Added Code
+    if not cli_overrides.repo_path.exists():
+        return f"Error: --repo-path does not exist: {cli_overrides.repo_path}"
 
-    prompt_path = Path(args.prompt_path)  #  Added Code
-    if not prompt_path.exists():  #  Added Code
-        return f"Error: --prompt-path does not exist: {prompt_path}"  #  Added Code
+    if not cli_overrides.prompt_path.exists():
+        return f"Error: --prompt-path does not exist: {cli_overrides.prompt_path}"
 
-    if args.agent.strip().lower() not in RELEASE_1_AGENT_CHOICES:  #  Added Code
-        return "Error: --agent must be 'mock' for Release 1."  #  Added Code
+    if cli_overrides.agent not in RELEASE_1_AGENT_CHOICES:
+        return "Error: --agent must be 'mock' for Release 1."
 
-    user_issue_was_provided = _has_user_issue_args(args)
+    if cli_overrides.sandbox_mode not in {"local", "docker"}:
+        return "Error: --sandbox must be 'local' or 'docker'."
 
-    if user_issue_was_provided and args.issue_number < 1:
+    user_issue_was_provided = _has_user_issue_cli_overrides(cli_overrides)
+
+    if user_issue_was_provided and cli_overrides.issue_number < 1:
         return "Error: --issue-number must be a positive integer."
 
-    if user_issue_was_provided and not args.issue_title.strip():
+    if user_issue_was_provided and not cli_overrides.issue_title.strip():
         return "Error: --issue-title cannot be empty."
 
-    if user_issue_was_provided and not args.issue_body.strip():
+    if user_issue_was_provided and not cli_overrides.issue_body.strip():
         return "Error: --issue-body cannot be empty."
 
-    if user_issue_was_provided and not args.label.strip():
+    if user_issue_was_provided and not cli_overrides.label.strip():
         return "Error: --label cannot be empty."
 
     return None
 
 
-def _apply_cli_args_to_setup_config(args: argparse.Namespace) -> None:
-    """Apply parsed CLI args into setup_config.py.
+def _apply_cli_overrides_to_setup_config(
+    cli_overrides: CliConfigOverrides,
+) -> None:
+    """Apply validated CLI overrides into setup_config.py."""
 
-    CLI args are input only.
-    setup_config.py remains the source of truth for the program.
-    """
-    setup_config.issue_number = args.issue_number
-    setup_config.issue_title = args.issue_title
-    setup_config.issue_body = args.issue_body
-    setup_config.label = args.label
-    setup_config.max_iterations = args.max_iterations
-    setup_config.prompt_path = Path(args.prompt_path)
-    setup_config.github_issue_path = Path(args.github_issue_path)  #  Added Code
-    setup_config.repo_path = Path(args.repo_path)  #  Added Code
-    setup_config.default_agent = args.agent.strip().lower()  #  Added Code
-    setup_config.dry_run = bool(args.dry_run)  #  Added Code
-
-    sandbox_mode = getattr(args, "sandbox", None)
-    if sandbox_mode is not None and hasattr(setup_config, "sandbox_mode"):
-        setup_config.sandbox_mode = sandbox_mode.strip().lower()
+    setup_config.issue_number = cli_overrides.issue_number
+    setup_config.issue_title = cli_overrides.issue_title
+    setup_config.issue_body = cli_overrides.issue_body
+    setup_config.label = cli_overrides.label
+    setup_config.max_iterations = cli_overrides.max_iterations
+    setup_config.prompt_path = cli_overrides.prompt_path
+    setup_config.github_issue_path = cli_overrides.github_issue_path
+    setup_config.repo_path = cli_overrides.repo_path
+    setup_config.default_agent = cli_overrides.agent
+    setup_config.dry_run = cli_overrides.dry_run
+    setup_config.sandbox_mode = cli_overrides.sandbox_mode
 
 
-def _has_user_issue_args(args: argparse.Namespace) -> bool:
+def _has_user_issue_cli_overrides(
+    cli_overrides: CliConfigOverrides,
+) -> bool:
     return (
-        args.issue_number > 0
-        or bool(args.issue_title.strip())
-        or bool(args.issue_body.strip())
+        cli_overrides.issue_number > 0
+        or bool(cli_overrides.issue_title.strip())
+        or bool(cli_overrides.issue_body.strip())
     )
 
 

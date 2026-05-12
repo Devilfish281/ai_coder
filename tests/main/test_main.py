@@ -1,7 +1,29 @@
-import ai_coder.main.main as main_module
+# tests/main/test_main.py
+import importlib
+
 import ai_coder.ralph.ralph as ralph_module
-from ai_coder.main import main
 from ai_coder.setup_config import c_setup_config
+
+main_module = importlib.import_module("ai_coder.main.main")
+
+_MAIN_TEST_ENV_NAMES = (
+    "TESTING_FLAG",
+    "ISSUE_NUMBER",
+    "ISSUE_TITLE",
+    "ISSUE_BODY",
+    "LABEL",
+    "MAX_ITERATIONS",
+    "PROMPT_PATH",
+    "REPO_PATH",
+    "RALPH_AGENT",
+    "DRY_RUN",
+    "RALPH_SANDBOX_MODE",
+)
+
+
+def _clear_main_test_env(monkeypatch) -> None:
+    for env_name in _MAIN_TEST_ENV_NAMES:
+        monkeypatch.delenv(env_name, raising=False)
 
 
 def _refresh_main_config() -> None:
@@ -15,14 +37,27 @@ def _refresh_main_config() -> None:
     ralph_module.logger = refreshed_config.get_logger()
 
 
-def test_main_runs_default_fake_issue(capsys, monkeypatch) -> None:
+def _prepare_main_cli_test_config(monkeypatch, tmp_path):
+    _clear_main_test_env(monkeypatch)
+
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("prompt", encoding="utf-8")
+
     monkeypatch.setenv("TESTING_FLAG", "true")
-    monkeypatch.delenv("ISSUE_NUMBER", raising=False)
-    monkeypatch.delenv("ISSUE_TITLE", raising=False)
-    monkeypatch.delenv("ISSUE_BODY", raising=False)
+    monkeypatch.setenv("REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("PROMPT_PATH", str(prompt_file))
+
     _refresh_main_config()
 
-    exit_code = main([])
+    return prompt_file
+
+
+def test_main_runs_default_fake_issue(capsys, monkeypatch) -> None:
+    _clear_main_test_env(monkeypatch)
+    monkeypatch.setenv("TESTING_FLAG", "true")
+    _refresh_main_config()
+
+    exit_code = main_module.main([])
 
     captured = capsys.readouterr()
 
@@ -32,10 +67,11 @@ def test_main_runs_default_fake_issue(capsys, monkeypatch) -> None:
 
 
 def test_main_accepts_custom_fake_issue(capsys, monkeypatch) -> None:
+    _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
     _refresh_main_config()
 
-    exit_code = main(
+    exit_code = main_module.main(
         [
             "--issue-number",
             "7",
@@ -56,10 +92,11 @@ def test_main_accepts_custom_fake_issue(capsys, monkeypatch) -> None:
 
 
 def test_main_rejects_invalid_max_iterations(capsys, monkeypatch) -> None:
+    _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
     _refresh_main_config()
 
-    exit_code = main(["--max-iterations", "0"])
+    exit_code = main_module.main(["--max-iterations", "0"])
 
     captured = capsys.readouterr()
 
@@ -68,10 +105,11 @@ def test_main_rejects_invalid_max_iterations(capsys, monkeypatch) -> None:
 
 
 def test_main_rejects_empty_label(capsys, monkeypatch) -> None:
+    _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
     _refresh_main_config()
 
-    exit_code = main(
+    exit_code = main_module.main(
         [
             "--issue-number",
             "1",
@@ -88,3 +126,137 @@ def test_main_rejects_empty_label(capsys, monkeypatch) -> None:
 
     assert exit_code == 1
     assert "Error: --label cannot be empty." in captured.out
+
+
+def test_main_valid_cli_overrides_update_setup_config(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    prompt_file = _prepare_main_cli_test_config(monkeypatch, tmp_path)
+
+    exit_code = main_module.main(
+        [
+            "--issue-number",
+            "8",
+            "--issue-title",
+            "Use CLI overrides",
+            "--issue-body",
+            "CLI values should update setup_config after validation.",
+            "--label",
+            "bug",
+            "--max-iterations",
+            "2",
+            "--prompt-path",
+            str(prompt_file),
+            "--repo-path",
+            str(tmp_path),
+            "--agent",
+            "mock",
+            "--sandbox",
+            "local",
+            "--no-dry-run",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Selected issue #8: Use CLI overrides" in captured.out
+    assert main_module.setup_config.issue_number == 8
+    assert main_module.setup_config.issue_title == "Use CLI overrides"
+    assert main_module.setup_config.issue_body == (
+        "CLI values should update setup_config after validation."
+    )
+    assert main_module.setup_config.label == "bug"
+    assert main_module.setup_config.max_iterations == 2
+    assert main_module.setup_config.prompt_path == prompt_file
+    assert main_module.setup_config.repo_path == tmp_path
+    assert main_module.setup_config.default_agent == "mock"
+    assert main_module.setup_config.sandbox_mode == "local"
+    assert main_module.setup_config.dry_run is False
+
+
+def test_main_invalid_max_iterations_leaves_setup_config_unchanged(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+    original_config = main_module.setup_config.to_dict()
+
+    exit_code = main_module.main(["--max-iterations", "0"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error: --max-iterations must be at least 1." in captured.out
+    assert main_module.setup_config.to_dict() == original_config
+
+
+def test_main_invalid_prompt_path_leaves_setup_config_unchanged(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+    missing_prompt_file = tmp_path / "missing_prompt.md"
+    original_config = main_module.setup_config.to_dict()
+
+    exit_code = main_module.main(["--prompt-path", str(missing_prompt_file)])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error: --prompt-path does not exist:" in captured.out
+    assert main_module.setup_config.to_dict() == original_config
+
+
+def test_main_invalid_repo_path_leaves_setup_config_unchanged(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+    missing_repo_path = tmp_path / "missing_repo"
+    original_config = main_module.setup_config.to_dict()
+
+    exit_code = main_module.main(["--repo-path", str(missing_repo_path)])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error: --repo-path does not exist:" in captured.out
+    assert main_module.setup_config.to_dict() == original_config
+
+
+def test_main_cli_repo_path_override_can_fix_bad_env_repo_path(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_main_test_env(monkeypatch)
+
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("prompt", encoding="utf-8")
+    missing_repo_path = tmp_path / "missing_repo"
+
+    monkeypatch.setenv("TESTING_FLAG", "true")
+    monkeypatch.setenv("REPO_PATH", str(missing_repo_path))
+    monkeypatch.setenv("PROMPT_PATH", str(prompt_file))
+    _refresh_main_config()
+
+    exit_code = main_module.main(
+        [
+            "--repo-path",
+            str(tmp_path),
+            "--prompt-path",
+            str(prompt_file),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Selected issue #1: Minimal local RALPH loop" in captured.out
+    assert main_module.setup_config.repo_path == tmp_path
