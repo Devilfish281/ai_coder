@@ -2,6 +2,7 @@
 import importlib
 
 import ai_coder.ralph.ralph as ralph_module
+from ai_coder.repository_context import RepositoryStartResult
 from ai_coder.setup_config import c_setup_config
 
 main_module = importlib.import_module("ai_coder.main.main")
@@ -37,6 +38,25 @@ def _refresh_main_config() -> None:
     ralph_module.logger = refreshed_config.get_logger()
 
 
+def _patch_clean_repository_context(monkeypatch, tmp_path) -> None:
+    def fake_repository_start(repo_path):
+        return RepositoryStartResult(
+            repo_path=tmp_path,
+            ready=True,
+            message="Repository context discovered. Repository is clean.",
+            active_branch="main",
+            is_clean=True,
+            status_output="",
+            blocked_reason="",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_start",
+        fake_repository_start,
+    )
+
+
 def _prepare_main_cli_test_config(monkeypatch, tmp_path):
     _clear_main_test_env(monkeypatch)
 
@@ -52,7 +72,9 @@ def _prepare_main_cli_test_config(monkeypatch, tmp_path):
     return prompt_file
 
 
-def test_main_runs_default_fake_issue(capsys, monkeypatch) -> None:
+def test_main_runs_default_fake_issue(capsys, monkeypatch, tmp_path) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+
     _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
     _refresh_main_config()
@@ -66,7 +88,9 @@ def test_main_runs_default_fake_issue(capsys, monkeypatch) -> None:
     assert "RALPH completed the selected issue." in captured.out
 
 
-def test_main_accepts_custom_fake_issue(capsys, monkeypatch) -> None:
+def test_main_accepts_custom_fake_issue(capsys, monkeypatch, tmp_path) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+
     _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
     _refresh_main_config()
@@ -133,6 +157,7 @@ def test_main_valid_cli_overrides_update_setup_config(
     monkeypatch,
     tmp_path,
 ) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
     prompt_file = _prepare_main_cli_test_config(monkeypatch, tmp_path)
 
     exit_code = main_module.main(
@@ -251,6 +276,7 @@ def test_main_cli_repo_path_override_can_fix_bad_env_repo_path(
     monkeypatch,
     tmp_path,
 ) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
     _clear_main_test_env(monkeypatch)
 
     prompt_file = tmp_path / "prompt.md"

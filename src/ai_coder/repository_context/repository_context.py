@@ -20,6 +20,9 @@ class RepositoryStartResult:
     ready: bool
     message: str
     active_branch: str = ""
+    is_clean: bool = False
+    status_output: str = ""
+    blocked_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,25 @@ def i_repository_start(repo_path: str | Path | None = None) -> RepositoryStartRe
             "Repository is in detached HEAD state.",
         )
 
+    clean_state_result = _check_clean_state(detected_repo_root)
+
+    if not clean_state_result.succeeded:
+        status_output = _git_diagnostic_output(clean_state_result)
+        return _blocked_clean_state_detection_result(
+            repo_root=detected_repo_root,
+            active_branch=active_branch,
+            status_output=status_output,
+        )
+
+    status_output = clean_state_result.stdout.strip()
+
+    if status_output:
+        return _blocked_dirty_result(
+            repo_root=detected_repo_root,
+            active_branch=active_branch,
+            status_output=status_output,
+        )
+
     message = (
         "Repository context discovered. "
         f"Repository root: {detected_repo_root}. "
@@ -119,6 +141,9 @@ def i_repository_start(repo_path: str | Path | None = None) -> RepositoryStartRe
         ready=True,
         message=message,
         active_branch=active_branch,
+        is_clean=True,
+        status_output="",
+        blocked_reason="",
     )
 
 
@@ -151,6 +176,74 @@ def _run_git_command(command: Sequence[str]) -> GitCommandResult:
         stdout=completed_process.stdout or "",
         stderr=completed_process.stderr or "",
         exit_code=completed_process.returncode,
+    )
+
+
+def _check_clean_state(repo_root: Path) -> GitCommandResult:
+    return _run_git_command(
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "status",
+            "--porcelain",
+        ]
+    )
+
+
+def _git_diagnostic_output(result: GitCommandResult) -> str:
+    return result.stderr.strip() or result.stdout.strip()
+
+
+def _blocked_dirty_result(
+    repo_root: Path,
+    active_branch: str,
+    status_output: str,
+) -> RepositoryStartResult:
+    message = (
+        "Blocked: Repository has uncommitted changes. "
+        f"Repository root: {repo_root}. "
+        f"Active branch: {active_branch}. "
+        "RALPH stopped before worktree creation because the main repository is unsafe. "
+        "Commit, stash, or discard the changes, then run RALPH again.\n\n"
+        f"Git status output:\n{status_output}"
+    )
+    logger.error(message)
+
+    return RepositoryStartResult(
+        repo_path=repo_root,
+        ready=False,
+        message=message,
+        active_branch=active_branch,
+        is_clean=False,
+        status_output=status_output,
+        blocked_reason="repository_dirty",
+    )
+
+
+def _blocked_clean_state_detection_result(
+    repo_root: Path,
+    active_branch: str,
+    status_output: str,
+) -> RepositoryStartResult:
+    message = (
+        "Blocked: Repository clean-state detection failed. "
+        f"Repository root: {repo_root}. "
+        f"Active branch: {active_branch}. "
+        "RALPH could not safely verify the repository clean state, so it stopped before worktree creation. "  #  Changed Code
+        "Run git status manually and fix the repository state before running RALPH again.\n\n"
+        f"Git error output:\n{status_output}"
+    )
+    logger.error(message)
+
+    return RepositoryStartResult(
+        repo_path=repo_root,
+        ready=False,
+        message=message,
+        active_branch=active_branch,
+        is_clean=False,
+        status_output=status_output,
+        blocked_reason="clean_state_detection_failed",
     )
 
 

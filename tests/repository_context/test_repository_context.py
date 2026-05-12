@@ -130,6 +130,98 @@ def test_repository_start_returns_blocked_result_for_detached_head(
     assert "Could not detect an active Git branch" in result.message
 
 
+def test_repository_start_allows_clean_main_repo_state(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    commands: list[list[str]] = []
+
+    _patch_git_discovery(
+        monkeypatch,
+        repo_root=repo_root,
+        branch_name="main",
+        status_stdout="",
+        command_log=commands,
+    )
+
+    result = i_repository_start(repo_root)
+
+    assert result.ready is True
+    assert result.is_clean is True
+    assert result.status_output == ""
+    assert result.blocked_reason == ""
+    assert result.repo_path == repo_root
+    assert result.active_branch == "main"
+    assert "Repository context discovered" in result.message
+    assert ["git", "-C", str(repo_root), "status", "--porcelain"] in commands
+
+
+def test_repository_start_blocks_dirty_main_repo_state(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    dirty_status_output = " M src/ai_coder/ralph/ralph.py\n?? scratch.md\n"
+
+    _patch_git_discovery(
+        monkeypatch,
+        repo_root=repo_root,
+        branch_name="main",
+        status_stdout=dirty_status_output,
+    )
+
+    result = i_repository_start(repo_root)
+
+    assert result.ready is False
+    assert result.is_clean is False
+    assert "src/ai_coder/ralph/ralph.py" in result.status_output
+    assert "scratch.md" in result.status_output
+    assert "Blocked" in result.message
+    assert "uncommitted changes" in result.message
+    assert str(repo_root) in result.message  #  Added Code
+    assert "main" in result.message  #  Added Code
+    assert "RALPH stopped before worktree creation" in result.message  #  Added Code
+    assert "Git status output:" in result.message  #  Added Code
+    assert "Commit, stash, or discard" in result.message  #  Added Code
+    assert result.blocked_reason == "repository_dirty"
+
+
+def test_repository_start_blocks_clean_state_detection_failure(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    git_error = "fatal: unable to read index"
+
+    _patch_git_discovery(
+        monkeypatch,
+        repo_root=repo_root,
+        branch_name="main",
+        status_return_code=1,
+        status_stderr=git_error,
+    )
+
+    result = i_repository_start(repo_root)
+
+    assert result.ready is False
+    assert result.is_clean is False
+    assert "Blocked" in result.message
+    assert "clean-state detection failed" in result.message
+    assert git_error in result.status_output
+    assert str(repo_root) in result.message  #  Added Code
+    assert "main" in result.message  #  Added Code
+    assert (
+        "RALPH could not safely verify the repository clean state" in result.message
+    )  #  Added Code
+    assert "Git error output:" in result.message  #  Added Code
+    assert "Run git status manually" in result.message  #  Added Code
+    assert result.blocked_reason == "clean_state_detection_failed"
+
+
 def _patch_git_discovery(
     monkeypatch,
     *,
@@ -137,8 +229,12 @@ def _patch_git_discovery(
     branch_name: str,
     root_return_code: int = 0,
     branch_return_code: int = 0,
+    status_return_code: int = 0,
     root_stderr: str = "",
     branch_stderr: str = "",
+    status_stdout: str = "",
+    status_stderr: str = "",
+    command_log: list[list[str]] | None = None,
 ) -> None:
     def fake_run(
         command: Sequence[str],
@@ -148,6 +244,9 @@ def _patch_git_discovery(
         check: bool,
     ) -> subprocess.CompletedProcess[str]:
         command_parts = [str(part) for part in command]
+
+        if command_log is not None:
+            command_log.append(command_parts)
 
         assert capture_output is True
         assert text is True
@@ -169,6 +268,14 @@ def _patch_git_discovery(
                 returncode=branch_return_code,
                 stdout=f"{branch_name}\n" if branch_return_code == 0 else "",
                 stderr=branch_stderr,
+            )
+
+        if command_parts[-2:] == ["status", "--porcelain"]:
+            return subprocess.CompletedProcess(
+                args=command_parts,
+                returncode=status_return_code,
+                stdout=status_stdout if status_return_code == 0 else "",
+                stderr=status_stderr,
             )
 
         return subprocess.CompletedProcess(
