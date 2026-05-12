@@ -13,6 +13,19 @@ load_dotenv_once()
 setup_config = c_setup_config.get_instance()
 logger = setup_config.get_logger()
 
+###############################################################################
+# constants
+SAFE_PROJECT_FILE_NAMES = (
+    "pyproject.toml",
+    "poetry.lock",
+    "README.md",
+)
+
+SAFE_PROJECT_DIRECTORY_NAMES = (
+    "src",
+    "tests",
+)
+
 
 @dataclass(frozen=True)
 class RepositoryStartResult:
@@ -23,6 +36,17 @@ class RepositoryStartResult:
     is_clean: bool = False
     status_output: str = ""
     blocked_reason: str = ""
+
+
+@dataclass(frozen=True)
+class RepositoryContextResult:
+    repo_path: Path
+    package_manager: str
+    test_command: str
+    test_command_source: str
+    project_files: tuple[str, ...]
+    useful_signals: tuple[str, ...]
+    prompt_summary: str
 
 
 @dataclass(frozen=True)
@@ -147,6 +171,67 @@ def i_repository_start(repo_path: str | Path | None = None) -> RepositoryStartRe
     )
 
 
+def i_repository_context_discover(
+    repo_path: str | Path | None = None,
+) -> RepositoryContextResult:
+    resolved_repo_path = _resolve_input_path(repo_path)
+    logger.info("Starting repository context discovery: %s", resolved_repo_path)
+
+    configured_test_command = getattr(setup_config, "test_command", "").strip()
+
+    if not resolved_repo_path.exists():
+        test_command, test_command_source = _detect_test_command(
+            repo_path=resolved_repo_path,
+            package_manager="unknown",
+            project_files=(),
+            configured_test_command=configured_test_command,
+        )
+        prompt_summary = _build_unavailable_prompt_summary(
+            repo_path=resolved_repo_path,
+            test_command=test_command,
+        )
+
+        return RepositoryContextResult(
+            repo_path=resolved_repo_path,
+            package_manager="unknown",
+            test_command=test_command,
+            test_command_source=test_command_source,
+            project_files=(),
+            useful_signals=("Repository context unavailable",),
+            prompt_summary=prompt_summary,
+        )
+
+    project_files = _collect_project_files(resolved_repo_path)
+    package_manager = _detect_package_manager(project_files)
+    test_command, test_command_source = _detect_test_command(
+        repo_path=resolved_repo_path,
+        package_manager=package_manager,
+        project_files=project_files,
+        configured_test_command=configured_test_command,
+    )
+    useful_signals = _collect_useful_signals(
+        package_manager=package_manager,
+        project_files=project_files,
+        test_command=test_command,
+    )
+    prompt_summary = _build_prompt_summary(
+        package_manager=package_manager,
+        test_command=test_command,
+        project_files=project_files,
+        useful_signals=useful_signals,
+    )
+
+    return RepositoryContextResult(
+        repo_path=resolved_repo_path,
+        package_manager=package_manager,
+        test_command=test_command,
+        test_command_source=test_command_source,
+        project_files=project_files,
+        useful_signals=useful_signals,
+        prompt_summary=prompt_summary,
+    )
+
+
 def _resolve_input_path(repo_path: str | Path | None) -> Path:
     if repo_path is None:
         return Path.cwd().resolve(strict=False)
@@ -177,6 +262,118 @@ def _run_git_command(command: Sequence[str]) -> GitCommandResult:
         stderr=completed_process.stderr or "",
         exit_code=completed_process.returncode,
     )
+
+
+def _collect_project_files(repo_path: Path) -> tuple[str, ...]:
+    project_files: list[str] = []
+
+    for file_name in SAFE_PROJECT_FILE_NAMES:
+        if (repo_path / file_name).is_file():
+            project_files.append(file_name)
+
+    for directory_name in SAFE_PROJECT_DIRECTORY_NAMES:
+        if (repo_path / directory_name).is_dir():
+            project_files.append(f"{directory_name}/")
+
+    return tuple(project_files)
+
+
+def _detect_package_manager(project_files: tuple[str, ...]) -> str:
+    if "poetry.lock" in project_files:
+        return "poetry"
+
+    if "pyproject.toml" in project_files:
+        return "python"
+
+    return "unknown"
+
+
+def _detect_test_command(
+    repo_path: Path,
+    package_manager: str,
+    project_files: tuple[str, ...],
+    configured_test_command: str,
+) -> tuple[str, str]:
+    if configured_test_command:
+        return configured_test_command, "configured"
+
+    has_tests_directory = "tests/" in project_files or (repo_path / "tests").is_dir()
+    has_pyproject = (
+        "pyproject.toml" in project_files or (repo_path / "pyproject.toml").is_file()
+    )
+
+    if package_manager == "poetry" and has_pyproject and has_tests_directory:
+        return "poetry run pytest", "inferred_from_poetry"
+
+    if has_tests_directory:
+        return "pytest", "inferred_from_tests_dir"
+
+    return "", "unknown"
+
+
+def _collect_useful_signals(
+    package_manager: str,
+    project_files: tuple[str, ...],
+    test_command: str,
+) -> tuple[str, ...]:
+    signals: list[str] = []
+
+    if "pyproject.toml" in project_files:
+        signals.append("Python project")
+
+    if package_manager == "poetry":
+        signals.append("Uses Poetry")
+
+    if "pytest" in test_command or "tests/" in project_files:
+        signals.append("Uses pytest")
+
+    if "src/" in project_files:
+        signals.append("Uses src layout")
+
+    if "tests/" in project_files:
+        signals.append("Has tests directory")
+
+    return tuple(signals)
+
+
+def _build_prompt_summary(
+    package_manager: str,
+    test_command: str,
+    project_files: tuple[str, ...],
+    useful_signals: tuple[str, ...],
+) -> str:
+    important_files_text = _join_context_values(project_files)
+    useful_signals_text = _join_context_values(useful_signals)
+    test_command_text = test_command or "unknown"
+
+    return (
+        "Repository context:\n"
+        f"- Package manager: {package_manager}\n"
+        f"- Test command: {test_command_text}\n"
+        f"- Important files: {important_files_text}\n"
+        f"- Project signals: {useful_signals_text}"
+    )
+
+
+def _build_unavailable_prompt_summary(
+    repo_path: Path,
+    test_command: str,
+) -> str:
+    test_command_text = test_command or "unknown"
+
+    return (
+        "Repository context unavailable.\n"
+        f"- Repository path: {repo_path}\n"
+        "- Package manager: unknown\n"
+        f"- Test command: {test_command_text}"
+    )
+
+
+def _join_context_values(values: tuple[str, ...]) -> str:
+    if not values:
+        return "none detected"
+
+    return ", ".join(values)
 
 
 def _check_clean_state(repo_root: Path) -> GitCommandResult:

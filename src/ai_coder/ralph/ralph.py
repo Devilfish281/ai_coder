@@ -56,7 +56,12 @@ from ai_coder.orchestrator import OrchestratorResult, i_orchestrator_run
 from ai_coder.prompt_preprocessor import i_prompt_preprocess
 from ai_coder.prompt_resolver import i_prompt_resolve
 
-from ai_coder.repository_context import i_repository_start
+from ai_coder.repository_context import (
+    i_repository_context_discover,
+    i_repository_start,
+)
+
+
 from ai_coder.sandbox_provider import i_sandbox_start
 from ai_coder.sync_out import i_sync_out_merge
 from ai_coder.test_runner import i_test_runner_run
@@ -72,33 +77,23 @@ load_dotenv_once()
 setup_config = c_setup_config.get_instance()
 logger = setup_config.get_logger()
 
-
 DEFAULT_RALPH_PROMPT_TEMPLATE = """# RALPH Core Instructions
 
 You are RALPH — Repository Autonomous Local Patch Helper.
 
 RALPH is a minimal local coding-agent loop.
 
-## Current Issue
+
+Repository context
+
+{{REPOSITORY_CONTEXT}}
+
 
 Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
 {{ISSUE_BODY}}
 
-## Core Rules
 
-- Work on one issue only.
-- Keep the change small.
-- Prefer tests that cross the public interface seam.
-- Do not rename public interface functions unless the issue explicitly asks for it.
-- Do not add unnecessary dependencies.
-- Run pytest before saying the work is complete.
-
-## Completion Signal
-
-When the task is complete, output this exact completion signal:
-
-{{COMPLETE_TOKEN}}
 """
 
 
@@ -109,7 +104,7 @@ class RalphResult:
     orchestrator_result: OrchestratorResult | None
     completed: bool
     message: str
-    status: str = "incomplete"  #  Added Code
+    status: str = "incomplete"
 
 
 def i_ralph_run(
@@ -140,7 +135,7 @@ def i_ralph_run(
             orchestrator_result=None,
             completed=False,
             message=repository_result.message,
-            status="blocked",  #  Added Code
+            status="blocked",
         )
 
     logger.info("Step 2: Read open GitHub issues.")
@@ -168,7 +163,7 @@ def i_ralph_run(
             orchestrator_result=None,
             completed=False,
             message="No open actionable issue selected.",
-            status="incomplete",  #  Added Code
+            status="incomplete",
         )
     logger.info(f"Selected issue #{selected_issue.number}: {selected_issue.title}")
 
@@ -185,6 +180,12 @@ def i_ralph_run(
     logger.info("Step 5: Start a sandbox or local execution environment.")
     sandbox_result = i_sandbox_start(worktree_result.worktree_path)
     logger.info(sandbox_result.message)
+
+    logger.info("Step 5b: Discover prompt-safe repository context.")
+    repository_context_result = i_repository_context_discover(
+        repository_result.repo_path
+    )
+    logger.info(repository_context_result.prompt_summary)
 
     # 6. Give an AI coding agent a prompt.
     logger.info("Step 6: Give an AI coding agent a prompt.")
@@ -205,6 +206,7 @@ def i_ralph_run(
     prompt = _preprocess_prompt_after_sandbox_ready(
         raw_prompt_template=raw_prompt_template,
         selected_issue=selected_issue,
+        repository_context_summary=repository_context_result.prompt_summary,
     )
     logger.info(f"Final prompt after preprocessing:\n{prompt}")
 
@@ -221,15 +223,13 @@ def i_ralph_run(
     )
 
     logger.info(
-        "Orchestrator result: completed=%s, iterations=%d, error=%s",  #  Changed Code
+        "Orchestrator result: completed=%s, iterations=%d, error=%s",
         orchestrator_result.completed,
         orchestrator_result.iterations,
         orchestrator_result.error,
     )
-    logger.info(
-        "Final agent output: %s", orchestrator_result.final_output
-    )  #  Changed Code
-    logger.info("All agent outputs: %s", orchestrator_result.outputs)  #  Changed Code
+    logger.info("Final agent output: %s", orchestrator_result.final_output)
+    logger.info("All agent outputs: %s", orchestrator_result.outputs)
     logger.info(
         "Agent provider used: %s",
         selected_agent_provider.__class__.__name__,
@@ -302,9 +302,7 @@ def i_ralph_run(
         orchestrator_result=orchestrator_result,
         completed=orchestrator_result.completed,
         message=message_result,
-        status=(
-            "complete" if orchestrator_result.completed else "incomplete"
-        ),  #  Added Code
+        status=("complete" if orchestrator_result.completed else "incomplete"),
     )
 
 
@@ -396,20 +394,26 @@ def _resolve_prompt_text(
 def _preprocess_prompt_after_sandbox_ready(
     raw_prompt_template: str,
     selected_issue: GitHubIssue,
+    repository_context_summary: str = "",
 ) -> str:
     logger.info("Step 6b: Preprocess prompt after sandbox is ready.")
     return i_prompt_preprocess(
         raw_prompt_template,
-        _build_prompt_replacements(selected_issue),
+        _build_prompt_replacements(
+            selected_issue,
+            repository_context_summary,
+        ),
     )
 
 
 def _build_prompt_replacements(
     selected_issue: GitHubIssue,
+    repository_context_summary: str = "",
 ) -> dict[str, object]:
     return {
         "ISSUE_NUMBER": selected_issue.number,
         "ISSUE_TITLE": selected_issue.title,
         "ISSUE_BODY": selected_issue.body,
+        "REPOSITORY_CONTEXT": repository_context_summary,
         "COMPLETE_TOKEN": COMPLETE_TOKEN,
     }

@@ -1,6 +1,11 @@
 from ai_coder.agent_provider import MockAgentProvider
 from ai_coder.github_issues import GitHubIssue
-from ai_coder.repository_context import RepositoryStartResult
+from ai_coder.repository_context import (
+    RepositoryContextResult,
+    RepositoryStartResult,
+)
+
+
 from ai_coder.ralph import i_ralph_run
 from ai_coder.worktree_manager import WorktreeCreateResult
 
@@ -38,14 +43,14 @@ def test_ralph_stops_before_worktree_creation_when_repository_is_blocked(
     tmp_path,
 ) -> None:
     dirty_status_output = " M src/ai_coder/ralph/ralph.py\n?? scratch.md"
-    blocked_message = (  #  Changed Code
-        "Blocked: Repository has uncommitted changes. "  #  Changed Code
-        f"Repository root: {tmp_path}. "  #  Changed Code
-        "Active branch: main. "  #  Changed Code
-        "RALPH stopped before worktree creation because the main repository is unsafe. "  #  Changed Code
-        "Commit, stash, or discard the changes, then run RALPH again.\n\n"  #  Changed Code
-        f"Git status output:\n{dirty_status_output}"  #  Changed Code
-    )  #  Changed Code
+    blocked_message = (
+        "Blocked: Repository has uncommitted changes. "
+        f"Repository root: {tmp_path}. "
+        "Active branch: main. "
+        "RALPH stopped before worktree creation because the main repository is unsafe. "
+        "Commit, stash, or discard the changes, then run RALPH again.\n\n"
+        f"Git status output:\n{dirty_status_output}"
+    )
 
     def fake_repository_start(repo_path):
         return RepositoryStartResult(
@@ -54,12 +59,15 @@ def test_ralph_stops_before_worktree_creation_when_repository_is_blocked(
             message=blocked_message,
             active_branch="main",
             is_clean=False,
-            status_output=dirty_status_output,  #  Changed Code
+            status_output=dirty_status_output,
             blocked_reason="repository_dirty",
         )
 
     def fail_worktree_create(*args, **kwargs):
         raise AssertionError("i_worktree_create() should not be called.")
+
+    def fail_repository_context_discover(*args, **kwargs):
+        raise AssertionError("i_repository_context_discover() should not be called.")
 
     monkeypatch.setattr(
         ralph_module,
@@ -70,6 +78,12 @@ def test_ralph_stops_before_worktree_creation_when_repository_is_blocked(
         ralph_module,
         "i_worktree_create",
         fail_worktree_create,
+    )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fail_repository_context_discover,
     )
 
     provider = MockAgentProvider()
@@ -177,6 +191,126 @@ def test_ralph_creates_worktree_when_repository_is_clean(
     assert worktree_calls[0]["repo_path"] == tmp_path
     assert worktree_calls[0]["issue_number"] == 7
     assert worktree_calls[0]["issue_title"] == "Clean repository path"
+
+
+def test_ralph_includes_repository_context_when_prompt_requests_it(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    discovered_repo_paths: list[object] = []
+
+    def fake_repository_context_discover(repo_path):
+        discovered_repo_paths.append(repo_path)
+        return RepositoryContextResult(
+            repo_path=tmp_path,
+            package_manager="poetry",
+            test_command="poetry run pytest",
+            test_command_source="inferred_from_poetry",
+            project_files=("pyproject.toml", "poetry.lock", "tests/"),
+            useful_signals=("Uses Poetry", "Uses pytest"),
+            prompt_summary=(
+                "Repository context:\n"
+                "- Package manager: poetry\n"
+                "- Test command: poetry run pytest"
+            ),
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fake_repository_context_discover,
+    )
+
+    prompt_template = (
+        "Repository facts:\n"
+        "{{REPOSITORY_CONTEXT}}\n\n"
+        "Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}\n"
+        "Body: {{ISSUE_BODY}}\n"
+        "Done token: {{COMPLETE_TOKEN}}"
+    )
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=8,
+                title="Add repository context discovery",
+                body="RALPH should include repository context in the prompt.",
+                labels=("tracer bullet",),
+            )
+        ],
+        prompt_template=prompt_template,
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert "Repository context:" in result.prompt
+    assert "Package manager: poetry" in result.prompt
+    assert "Test command: poetry run pytest" in result.prompt
+    assert "Issue #8: Add repository context discovery" in result.prompt
+    assert "RALPH should include repository context in the prompt." in result.prompt
+    assert provider.prompts == [result.prompt]
+    assert discovered_repo_paths == [tmp_path]
+
+
+def test_ralph_default_prompt_includes_repository_context(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    discovered_repo_paths: list[object] = []
+
+    def fake_repository_context_discover(repo_path):
+        discovered_repo_paths.append(repo_path)
+        return RepositoryContextResult(
+            repo_path=tmp_path,
+            package_manager="poetry",
+            test_command="poetry run pytest",
+            test_command_source="configured",
+            project_files=("pyproject.toml", "poetry.lock", "src/", "tests/"),
+            useful_signals=("Python project", "Uses Poetry", "Uses pytest"),
+            prompt_summary=(
+                "Repository context:\n"
+                "- Package manager: poetry\n"
+                "- Test command: poetry run pytest\n"
+                "- Important files: pyproject.toml, poetry.lock, src/, tests/\n"
+                "- Project signals: Python project, Uses Poetry, Uses pytest"
+            ),
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fake_repository_context_discover,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=8,
+                title="Add repository context discovery",
+                body="Default prompts should include repository context.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        prompt_path=None,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert "Repository context" in result.prompt
+    assert "Package manager: poetry" in result.prompt
+    assert "Test command: poetry run pytest" in result.prompt
+    assert "Default prompts should include repository context." in result.prompt
+    assert provider.prompts == [result.prompt]
+    assert discovered_repo_paths == [tmp_path]
 
 
 def test_ralph_selects_issue_builds_prompt_and_completes(
