@@ -30,10 +30,18 @@ LOGGER_PROJECT_NAME = "AI_CODER"
 DEFAULT_PROJECT_NAME = "AI Code"
 # GitHub
 DEFAULT_GITHUB_REPO = "Devilfish281/ai_coder"
+
+
 DEFAULT_DOCKER_IMAGE_NAME = "ai-code-ralph-test-runtime:latest"
+DEFAULT_CODEX_COMMAND = ""
+
+SUPPORTED_AGENT_NAMES = {"mock", "codex"}
+SUPPORTED_SANDBOX_MODES = {"local", "docker"}
 
 DEFAULT_AGENT_NAME = "mock"
 DEFAULT_TEST_COMMAND = "poetry run pytest"
+
+
 DEFAULT_COMMIT_MESSAGE_TEMPLATE = "RALPH: issue #{issue_number} - {issue_title}"
 ###############################################################################
 # Paths
@@ -152,7 +160,15 @@ class c_setup_config(BaseModel):
             "RALPH_AGENT",
             DEFAULT_AGENT_NAME,
         ),
-        description="Release 1 agent provider name. Only 'mock' is supported now.",
+        description="Selected agent provider name. Use 'mock' or 'codex'.",
+    )
+
+    codex_command: str = Field(
+        default_factory=lambda: c_setup_config.get_env(
+            "CODEX_COMMAND",
+            DEFAULT_CODEX_COMMAND,
+        ),
+        description="Command used to start CodexProvider when RALPH_AGENT is 'codex'.",
     )
 
     dry_run: bool = Field(
@@ -338,10 +354,9 @@ class c_setup_config(BaseModel):
     ) -> None:
         logger = self.get_logger()
         logger.info("Validating configuration initialization...")
-        if require_docker:
-            self.validate_docker_configuration()
 
         self.validate_sandbox_mode()
+        self.validate_agent_provider()
 
         if not self.project_name.strip():
             logger.error("PROJECT_NAME cannot be empty.")
@@ -354,10 +369,6 @@ class c_setup_config(BaseModel):
         if not self.github_repo.strip():
             logger.error("GITHUB_REPO cannot be empty.")
             raise ValueError("GITHUB_REPO cannot be empty.")
-
-        if self.default_agent.strip().lower() != "mock":
-            logger.error("RALPH_AGENT must be 'mock' for Release 1.")
-            raise ValueError("RALPH_AGENT must be 'mock' for Release 1.")
 
         if not self.test_command.strip():
             logger.error("TEST_COMMAND cannot be empty.")
@@ -408,6 +419,12 @@ class c_setup_config(BaseModel):
             logger.error("PROMPT_PATH does not exist: %s", self.prompt_path)
             raise ValueError(f"PROMPT_PATH does not exist: {self.prompt_path}")
 
+        if require_docker or self.sandbox_mode.strip().lower() == "docker":
+            self.validate_docker_configuration()
+
+        if self.default_agent.strip().lower() == "codex":
+            self.validate_codex_configuration()
+
         if not require_llm:
             return
 
@@ -422,19 +439,6 @@ class c_setup_config(BaseModel):
 
         if self.llm is None:
             self.get_llm()
-
-        if not self.docker_image_name.strip():
-            logger.error("RALPH_DOCKER_IMAGE_NAME cannot be empty.")
-            raise ValueError("RALPH_DOCKER_IMAGE_NAME cannot be empty.")
-
-        if not self.ralph_dockerfile_path.exists():
-            logger.error(
-                "RALPH_DOCKERFILE_PATH does not exist: %s",
-                self.ralph_dockerfile_path,
-            )
-            raise ValueError(
-                f"RALPH_DOCKERFILE_PATH does not exist: {self.ralph_dockerfile_path}"
-            )
 
     def to_dict(self) -> dict:
         """Return a safe dictionary representation of the configuration."""
@@ -460,6 +464,7 @@ class c_setup_config(BaseModel):
             "repo_path": str(self.repo_path),
             "github_repo": self.github_repo,
             "default_agent": self.default_agent,
+            "codex_command": self.codex_command,
             "dry_run": self.dry_run,
             "test_command": self.test_command,
             "commit_message_template": self.commit_message_template,
@@ -494,6 +499,7 @@ class c_setup_config(BaseModel):
             f"repo_path={str(self.repo_path)!r}, "
             f"github_repo={self.github_repo!r}, "
             f"default_agent={self.default_agent!r}, "
+            f"codex_command={self.codex_command!r}, "
             f"dry_run={self.dry_run!r}, "
             f"test_command={self.test_command!r}, "
             f"commit_message_template={self.commit_message_template!r}, "
@@ -512,22 +518,43 @@ class c_setup_config(BaseModel):
         logger = self.get_logger()
 
         if not self.docker_image_name.strip():
-            logger.error("RALPH_DOCKER_IMAGE_NAME cannot be empty.")
-            raise ValueError("RALPH_DOCKER_IMAGE_NAME cannot be empty.")
+            logger.error(
+                "RALPH_SANDBOX_MODE='docker' requires RALPH_DOCKER_IMAGE_NAME."
+            )
+            raise ValueError(
+                "RALPH_SANDBOX_MODE='docker' requires RALPH_DOCKER_IMAGE_NAME."
+            )
 
         if not self.ralph_dockerfile_path.exists():
             logger.error(
-                "RALPH_DOCKERFILE_PATH does not exist: %s",
+                "RALPH_SANDBOX_MODE='docker' requires RALPH_DOCKERFILE_PATH to exist: %s",
                 self.ralph_dockerfile_path,
             )
             raise ValueError(
-                f"RALPH_DOCKERFILE_PATH does not exist: {self.ralph_dockerfile_path}"
+                "RALPH_SANDBOX_MODE='docker' requires "
+                f"RALPH_DOCKERFILE_PATH to exist: {self.ralph_dockerfile_path}"
             )
 
     def validate_sandbox_mode(self) -> None:
-        allowed_modes = {"local", "docker"}
-        if self.sandbox_mode not in allowed_modes:
+        cleaned_sandbox_mode = self.sandbox_mode.strip().lower()
+
+        if cleaned_sandbox_mode not in SUPPORTED_SANDBOX_MODES:
             raise ValueError("RALPH_SANDBOX_MODE must be 'local' or 'docker'.")
+
+    def validate_agent_provider(self) -> None:
+        logger = self.get_logger()
+        cleaned_agent_name = self.default_agent.strip().lower()
+
+        if cleaned_agent_name not in SUPPORTED_AGENT_NAMES:
+            logger.error("RALPH_AGENT must be 'mock' or 'codex'.")
+            raise ValueError("RALPH_AGENT must be 'mock' or 'codex'.")
+
+    def validate_codex_configuration(self) -> None:
+        logger = self.get_logger()
+
+        if not self.codex_command.strip():
+            logger.error("RALPH_AGENT='codex' requires CODEX_COMMAND.")
+            raise ValueError("RALPH_AGENT='codex' requires CODEX_COMMAND.")
 
     # Thread Safety for Singleton:
     @classmethod

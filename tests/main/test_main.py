@@ -177,6 +177,22 @@ def test_main_valid_cli_overrides_update_setup_config(
     assert main_module.setup_config.dry_run is False
 
 
+def test_main_rejects_codex_agent_until_codex_runtime_exists(
+    capsys,
+    monkeypatch,
+) -> None:
+    _clear_main_test_env(monkeypatch)
+    monkeypatch.setenv("TESTING_FLAG", "true")
+    _refresh_main_config()
+
+    exit_code = main_module.main(["--agent", "codex"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error: --agent must be 'mock' for Release 1." in captured.out
+
+
 def test_main_invalid_max_iterations_leaves_setup_config_unchanged(
     capsys,
     monkeypatch,
