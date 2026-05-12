@@ -181,11 +181,11 @@ def test_repository_start_blocks_dirty_main_repo_state(
     assert "scratch.md" in result.status_output
     assert "Blocked" in result.message
     assert "uncommitted changes" in result.message
-    assert str(repo_root) in result.message  #  Added Code
-    assert "main" in result.message  #  Added Code
-    assert "RALPH stopped before worktree creation" in result.message  #  Added Code
-    assert "Git status output:" in result.message  #  Added Code
-    assert "Commit, stash, or discard" in result.message  #  Added Code
+    assert str(repo_root) in result.message
+    assert "main" in result.message
+    assert "RALPH stopped before worktree creation" in result.message
+    assert "Git status output:" in result.message
+    assert "Commit, stash, or discard" in result.message
     assert result.blocked_reason == "repository_dirty"
 
 
@@ -212,14 +212,160 @@ def test_repository_start_blocks_clean_state_detection_failure(
     assert "Blocked" in result.message
     assert "clean-state detection failed" in result.message
     assert git_error in result.status_output
-    assert str(repo_root) in result.message  #  Added Code
-    assert "main" in result.message  #  Added Code
-    assert (
-        "RALPH could not safely verify the repository clean state" in result.message
-    )  #  Added Code
-    assert "Git error output:" in result.message  #  Added Code
-    assert "Run git status manually" in result.message  #  Added Code
+    assert str(repo_root) in result.message
+    assert "main" in result.message
+    assert "RALPH could not safely verify the repository clean state" in result.message
+    assert "Git error output:" in result.message
+    assert "Run git status manually" in result.message
     assert result.blocked_reason == "clean_state_detection_failed"
+
+
+def test_repository_context_discovery_prefers_configured_test_command(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\n", encoding="utf-8"
+    )
+    (repo_root / "poetry.lock").write_text("", encoding="utf-8")
+    (repo_root / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    (repo_root / "src").mkdir()
+    (repo_root / "tests").mkdir()
+    (repo_root / ".env").write_text("SECRET_VALUE=do-not-read\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "custom test command",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert result.repo_path == repo_root
+    assert result.package_manager == "poetry"
+    assert result.test_command == "custom test command"
+    assert result.test_command_source == "configured"
+    assert "pyproject.toml" in result.project_files
+    assert "poetry.lock" in result.project_files
+    assert "src/" in result.project_files
+    assert "tests/" in result.project_files
+    assert "Uses Poetry" in result.useful_signals
+    assert "Uses pytest" in result.useful_signals
+    assert "custom test command" in result.prompt_summary
+    assert ".env" not in result.prompt_summary
+
+
+def test_repository_context_discovery_infers_poetry_pytest_command(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\n", encoding="utf-8"
+    )
+    (repo_root / "poetry.lock").write_text("", encoding="utf-8")
+    (repo_root / "tests").mkdir()
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert result.package_manager == "poetry"
+    assert result.test_command == "poetry run pytest"
+    assert result.test_command_source == "inferred_from_poetry"
+    assert "Uses Poetry" in result.useful_signals
+    assert "Uses pytest" in result.useful_signals
+    assert "poetry run pytest" in result.prompt_summary
+
+
+def test_repository_context_discovery_infers_pytest_from_tests_directory(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_root / "tests").mkdir()
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert result.package_manager == "python"
+    assert result.test_command == "pytest"
+    assert result.test_command_source == "inferred_from_tests_dir"
+    assert "Python project" in result.useful_signals
+    assert "Uses pytest" in result.useful_signals
+
+
+def test_repository_context_discovery_keeps_prompt_summary_safe(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_root / "tests").mkdir()
+    (repo_root / ".env").write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
+    (repo_root / ".git").mkdir()
+    (repo_root / ".venv").mkdir()
+    (repo_root / "node_modules").mkdir()
+    (repo_root / ".pytest_cache").mkdir()
+    logs_dir = repo_root / "var" / "logs"
+    logs_dir.mkdir(parents=True)
+    (logs_dir / "reportlog.log").write_text("log text\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert "Repository context:" in result.prompt_summary
+    assert "pyproject.toml" in result.prompt_summary
+    assert "tests/" in result.prompt_summary
+    assert ".env" not in result.prompt_summary
+    assert ".git" not in result.prompt_summary
+    assert ".venv" not in result.prompt_summary
+    assert "node_modules" not in result.prompt_summary
+    assert ".pytest_cache" not in result.prompt_summary
+    assert "reportlog.log" not in result.prompt_summary
+
+
+def test_repository_context_discovery_returns_unknown_context_for_missing_path(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    missing_repo_path = tmp_path / "missing-repo"
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(missing_repo_path)
+
+    assert result.repo_path == missing_repo_path
+    assert result.package_manager == "unknown"
+    assert result.test_command == ""
+    assert result.test_command_source == "unknown"
+    assert result.project_files == ()
+    assert result.useful_signals == ("Repository context unavailable",)
+    assert "Repository context unavailable" in result.prompt_summary
 
 
 def _patch_git_discovery(
