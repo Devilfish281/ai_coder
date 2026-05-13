@@ -5,7 +5,7 @@ from ai_coder.repository_context import (
     RepositoryStartResult,
 )
 
-
+from ai_coder.sandbox_provider import LocalSandboxProvider, SandboxStartResult
 from ai_coder.ralph import i_ralph_run
 from ai_coder.worktree_manager import WorktreeCreateResult
 
@@ -35,6 +35,40 @@ def _patch_clean_repository_context(monkeypatch, tmp_path) -> None:
         ralph_module,
         "i_repository_start",
         fake_repository_start,
+    )
+
+
+def _patch_successful_worktree_create(monkeypatch, tmp_path) -> None:
+    def fake_worktree_create(
+        repo_path,
+        issue_number,
+        issue_title,
+        worktree_root=None,
+    ):
+        worktree_path = tmp_path / "worktree"
+
+        return WorktreeCreateResult(
+            repo_path=tmp_path,
+            worktree_path=worktree_path,
+            branch_name=f"ralph-issue-{issue_number}-test-worktree",
+            command=(
+                "git",
+                "-C",
+                str(tmp_path),
+                "worktree",
+                "add",
+                "-b",
+                f"ralph-issue-{issue_number}-test-worktree",
+                str(worktree_path),
+            ),
+            created=True,
+            message="Created Git worktree: test worktree.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_create",
+        fake_worktree_create,
     )
 
 
@@ -156,8 +190,8 @@ def test_ralph_creates_worktree_when_repository_is_clean(
                 "ralph-issue-7-clean-repository-path",
                 str(worktree_path),
             ),
-            created=False,
-            message="Worktree creation is stubbed in this tracer-bullet slice.",
+            created=True,
+            message="Created Git worktree: test worktree.",
         )
 
     monkeypatch.setattr(
@@ -193,11 +227,170 @@ def test_ralph_creates_worktree_when_repository_is_clean(
     assert worktree_calls[0]["issue_title"] == "Clean repository path"
 
 
+def test_ralph_stops_when_worktree_creation_fails_before_sandbox_start(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+
+    failure_message = "Failed to create Git worktree: branch already exists."
+
+    def fake_worktree_create(
+        repo_path,
+        issue_number,
+        issue_title,
+        worktree_root=None,
+    ):
+        return WorktreeCreateResult(
+            repo_path=tmp_path,
+            worktree_path=tmp_path / "worktree",
+            branch_name="ralph-issue-13-add-safe-worktree-creation",
+            command=(
+                "git",
+                "-C",
+                str(tmp_path),
+                "worktree",
+                "add",
+                "-b",
+                "ralph-issue-13-add-safe-worktree-creation",
+                str(tmp_path / "worktree"),
+            ),
+            created=False,
+            message=failure_message,
+        )
+
+    def fail_sandbox_start(*args, **kwargs):
+        raise AssertionError("i_sandbox_start() should not be called.")
+
+    def fail_repository_context_discover(*args, **kwargs):
+        raise AssertionError("i_repository_context_discover() should not be called.")
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_create",
+        fake_worktree_create,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fail_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fail_repository_context_discover,
+    )
+
+    provider = MockAgentProvider()
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=13,
+                title="Add safe worktree creation",
+                body="RALPH should stop when worktree creation fails.",
+                labels=("bug",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 13
+    assert result.prompt == ""
+    assert result.orchestrator_result is None
+    assert result.completed is False
+    assert result.status == "blocked"
+    assert result.message == failure_message
+    assert "Failed to create Git worktree" in result.message
+    assert provider.run_count == 0
+
+
+def test_ralph_uses_created_worktree_path_for_sandbox_startup(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "created-worktree"
+    sandbox_start_paths: list[object] = []
+
+    def fake_worktree_create(
+        repo_path,
+        issue_number,
+        issue_title,
+        worktree_root=None,
+    ):
+        return WorktreeCreateResult(
+            repo_path=tmp_path,
+            worktree_path=worktree_path,
+            branch_name="ralph-issue-13-add-safe-worktree-creation",
+            command=(
+                "git",
+                "-C",
+                str(tmp_path),
+                "worktree",
+                "add",
+                "-b",
+                "ralph-issue-13-add-safe-worktree-creation",
+                str(worktree_path),
+            ),
+            created=True,
+            message="Created Git worktree: test worktree.",
+        )
+
+    def fake_sandbox_start(working_directory, provider_name=None):
+        sandbox_start_paths.append(working_directory)
+        return SandboxStartResult(
+            working_directory=worktree_path,
+            provider_name="local",
+            started=True,
+            message="Started test local sandbox.",
+            handle=LocalSandboxProvider(worktree_path),
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_create",
+        fake_worktree_create,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=13,
+                title="Add safe worktree creation",
+                body="RALPH should start the sandbox in the created worktree.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert sandbox_start_paths == [worktree_path]
+    assert sandbox_start_paths[0] != tmp_path
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 13
+    assert result.completed is True
+    assert result.status == "complete"
+    assert provider.run_count == 1
+
+
 def test_ralph_includes_repository_context_when_prompt_requests_it(
     monkeypatch,
     tmp_path,
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
     discovered_repo_paths: list[object] = []
 
     def fake_repository_context_discover(repo_path):
@@ -261,6 +454,7 @@ def test_ralph_default_prompt_includes_repository_context(
     tmp_path,
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
     discovered_repo_paths: list[object] = []
 
     def fake_repository_context_discover(repo_path):
@@ -318,6 +512,7 @@ def test_ralph_selects_issue_builds_prompt_and_completes(
     tmp_path,
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
 
     issues = [
         GitHubIssue(
@@ -352,6 +547,7 @@ def test_ralph_returns_incomplete_status_when_orchestrator_does_not_complete(
     tmp_path,
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
 
     issues = [
         GitHubIssue(
@@ -398,6 +594,7 @@ def test_ralph_resolves_prompt_file_before_preprocessing(
     tmp_path,
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
 
     prompt_file = tmp_path / "ralph_prompt.txt"
     prompt_file.write_text(
@@ -447,6 +644,7 @@ def test_ralph_creates_test_issue_when_no_issues_and_testing_flag(
     ralph_module.setup_config = c_setup_config.get_instance()
     ralph_module.logger = ralph_module.setup_config.get_logger()
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
 
     provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
 
@@ -487,6 +685,7 @@ def test_ralph_loads_local_issue_file_when_no_issue_is_provided(
     ralph_module.setup_config = c_setup_config.get_instance()
     ralph_module.logger = ralph_module.setup_config.get_logger()
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
 
     provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
 

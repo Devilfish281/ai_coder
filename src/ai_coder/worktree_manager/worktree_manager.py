@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,18 @@ class WorktreeCreateResult:
 class WorktreePreserveResult:
     preserved: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class _GitWorktreeCommandResult:
+    stdout: str
+    stderr: str
+    exit_code: int
+    error: str = ""
+
+    @property
+    def succeeded(self) -> bool:
+        return self.exit_code == 0 and not self.error
 
 
 def i_worktree_sanitize_branch_name(raw_name: str) -> str:
@@ -125,13 +138,73 @@ def i_worktree_create(
 
     logger.info(f"Prepared Git worktree creation command: {command}")
 
+    try:
+        resolved_worktree_root.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        message = f"Failed to prepare Git worktree root: {error}"
+        logger.error(message)
+
+        return WorktreeCreateResult(
+            repo_path=resolved_repo_path,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            command=tuple(command),
+            created=False,
+            message=message,
+        )
+
+    if worktree_path.exists():
+        message = f"Failed to create Git worktree because the path already exists: {worktree_path}"
+        logger.error(message)
+        return WorktreeCreateResult(
+            repo_path=resolved_repo_path,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            command=tuple(command),
+            created=False,
+            message=message,
+        )
+
+    command_result = _run_worktree_create_command(command)
+
+    if command_result.succeeded:
+        message = f"Created Git worktree: {worktree_path}"
+        logger.info(message)
+        return WorktreeCreateResult(
+            repo_path=resolved_repo_path,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            command=tuple(command),
+            created=True,
+            message=message,
+        )
+
+    if command_result.error:
+        message = f"Failed to run Git worktree command: {command_result.error}"
+        logger.error(message)
+        return WorktreeCreateResult(
+            repo_path=resolved_repo_path,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            command=tuple(command),
+            created=False,
+            message=message,
+        )
+
+    git_output = command_result.stderr.strip() or command_result.stdout.strip()
+    if not git_output:
+        git_output = f"Git exited with code {command_result.exit_code}."
+
+    message = f"Failed to create Git worktree: {git_output}"
+    logger.error(message)
+
     return WorktreeCreateResult(
         repo_path=resolved_repo_path,
         worktree_path=worktree_path,
         branch_name=branch_name,
         command=tuple(command),
         created=False,
-        message="Worktree creation is stubbed in this tracer-bullet slice.",
+        message=message,
     )
 
 
@@ -164,4 +237,32 @@ def i_worktree_preserve(
     return WorktreePreserveResult(
         preserved=False,
         reason="No preservation needed after successful completion.",
+    )
+
+
+def _run_worktree_create_command(
+    command: list[str],
+) -> _GitWorktreeCommandResult:
+    logger.info("Running Git worktree creation command: %s", command)
+
+    try:
+        completed_process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        logger.error("Git worktree command failed before completion: %s", error)
+        return _GitWorktreeCommandResult(
+            stdout="",
+            stderr="",
+            exit_code=1,
+            error=str(error),
+        )
+
+    return _GitWorktreeCommandResult(
+        stdout=completed_process.stdout or "",
+        stderr=completed_process.stderr or "",
+        exit_code=completed_process.returncode,
     )

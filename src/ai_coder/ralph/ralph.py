@@ -176,9 +176,20 @@ def i_ralph_run(
     )
     logger.info(worktree_result.message)
 
-    # 5. Start a sandbox or local execution environment.
+    if not worktree_result.created:
+        logger.info("Worktree creation failed. RALPH will stop before sandbox startup.")
+        return RalphResult(
+            selected_issue=selected_issue,
+            prompt="",
+            orchestrator_result=None,
+            completed=False,
+            message=worktree_result.message,
+            status="blocked",
+        )
+
     logger.info("Step 5: Start a sandbox or local execution environment.")
     sandbox_result = i_sandbox_start(worktree_result.worktree_path)
+
     logger.info(sandbox_result.message)
 
     logger.info("Step 5b: Discover prompt-safe repository context.")
