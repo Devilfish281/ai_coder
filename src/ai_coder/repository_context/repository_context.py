@@ -363,7 +363,7 @@ def _collect_project_files(repo_path: Path) -> tuple[str, ...]:
         if _should_exclude_context_path(candidate_path, repo_path):
             continue
 
-        if candidate_path.is_file():  #  Changed Code
+        if candidate_path.is_file():
             project_files.append(file_name)
 
     for directory_name in SAFE_PROJECT_DIRECTORY_NAMES:
@@ -372,7 +372,7 @@ def _collect_project_files(repo_path: Path) -> tuple[str, ...]:
         if _should_exclude_context_path(candidate_path, repo_path):
             continue
 
-        if candidate_path.is_dir():  #  Changed Code
+        if candidate_path.is_dir():
             project_files.append(f"{directory_name}/")
 
     return tuple(project_files)
@@ -527,7 +527,7 @@ def _blocked_clean_state_detection_result(
         "Blocked: Repository clean-state detection failed. "
         f"Repository root: {repo_root}. "
         f"Active branch: {active_branch}. "
-        "RALPH could not safely verify the repository clean state, so it stopped before worktree creation. "  #  Changed Code
+        "RALPH could not safely verify the repository clean state, so it stopped before worktree creation. "
         "Run git status manually and fix the repository state before running RALPH again.\n\n"
         f"Git error output:\n{status_output}"
     )

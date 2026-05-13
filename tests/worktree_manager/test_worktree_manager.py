@@ -1,3 +1,6 @@
+# src/ai_coder/worktree_manager/worktree_manager.py
+import pytest
+
 from ai_coder.worktree_manager import (
     i_worktree_branch_name,
     i_worktree_create,
@@ -23,7 +26,7 @@ def test_worktree_create_command_is_testable_without_running_git() -> None:
     result = i_worktree_create_command(
         repo_path="C:/repo/ai_coder",
         worktree_path="C:/repo/ai_coder_worktrees/issue-12",
-        branch_name="ralph-issue-12-fix-prompt-builder",  #  Changed Code
+        branch_name="ralph-issue-12-fix-prompt-builder",
     )
 
     assert result == [
@@ -33,7 +36,7 @@ def test_worktree_create_command_is_testable_without_running_git() -> None:
         "worktree",
         "add",
         "-b",
-        "ralph-issue-12-fix-prompt-builder",  #  Changed Code
+        "ralph-issue-12-fix-prompt-builder",
         "C:/repo/ai_coder_worktrees/issue-12",
     ]
 
@@ -47,7 +50,7 @@ def test_worktree_create_stub_returns_command_without_running_git(tmp_path) -> N
     )
 
     assert result.created is False
-    assert result.branch_name == "ralph-issue-12-fix-prompt-builder"  #  Changed Code
+    assert result.branch_name == "ralph-issue-12-fix-prompt-builder"
     assert result.command[0] == "git"
     assert "stubbed" in result.message
 
@@ -81,3 +84,74 @@ def test_worktree_create_defaults_to_hidden_ai_coder_worktree_root(tmp_path) -> 
         / "ai_coder_worktrees"
         / "ralph-issue-1-minimal-local-ralph-loop"
     )
+
+
+def test_worktree_branch_name_shortens_long_issue_titles() -> None:  #
+    long_title = (  #
+        "Add a very very very very very very very very very very "  #
+        "long worktree branch naming strategy for Windows paths"  #
+    )  #
+
+    result = i_worktree_branch_name(12, long_title)  #
+
+    assert result.startswith("ralph-issue-12-")  #
+    assert len(result) <= 80  #
+    assert not result.endswith("-")  #
+
+
+def test_worktree_branch_name_sanitizes_git_and_windows_unsafe_characters() -> None:  #
+    result = i_worktree_branch_name(
+        12, 'Fix prompt !`echo title` {{ISSUE_BODY}} / \\ : * ? " < > | [ ] ~ ^ @'
+    )  #
+
+    assert result.startswith("ralph-issue-12-")  #
+    assert " " not in result  #
+    assert "/" not in result  #
+    assert "\\" not in result  #
+    assert ":" not in result  #
+    assert "*" not in result  #
+    assert "?" not in result  #
+    assert '"' not in result  #
+    assert "<" not in result  #
+    assert ">" not in result  #
+    assert "|" not in result  #
+    assert "[" not in result  #
+    assert "]" not in result  #
+    assert "~" not in result  #
+    assert "^" not in result  #
+    assert "@" not in result  #
+    assert "--" not in result  #
+
+
+def test_worktree_branch_name_uses_fallback_when_title_has_no_safe_characters() -> (
+    None
+):  #
+    result = i_worktree_branch_name(12, "!!! /// ::: ***")  #
+
+    assert result == "ralph-issue-12-work"  #
+
+
+def test_worktree_branch_name_rejects_invalid_issue_number() -> None:  #
+    with pytest.raises(ValueError, match="issue_number"):  #
+        i_worktree_branch_name(0, "Fix bug")  #
+
+
+def test_worktree_create_uses_shortened_branch_name_for_worktree_folder(
+    tmp_path,
+) -> None:  #
+    repo_path = tmp_path / "ai_coder"  #
+    long_title = (  #
+        "Add a very very very very very very very very very very "  #
+        "long worktree branch naming strategy for Windows paths"  #
+    )  #
+
+    result = i_worktree_create(  #
+        repo_path=repo_path,  #
+        issue_number=12,  #
+        issue_title=long_title,  #
+    )  #
+
+    assert result.branch_name.startswith("ralph-issue-12-")  #
+    assert len(result.branch_name) <= 80  #
+    assert result.worktree_path.name == result.branch_name  #
+    assert len(result.worktree_path.name) <= 80  #

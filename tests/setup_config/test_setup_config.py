@@ -111,7 +111,7 @@ def test_setup_config_uses_github_issue_path_when_no_dir_or_file_name(
 
 def test_setup_config_exposes_release_1_runtime_fields(monkeypatch, tmp_path) -> None:
     _clear_runtime_env(monkeypatch)
-    prompt_file = _prepare_valid_paths(monkeypatch, tmp_path)  #  Changed Code
+    prompt_file = _prepare_valid_paths(monkeypatch, tmp_path)
 
     monkeypatch.setenv("PROJECT_NAME", "AI Code")
     monkeypatch.setenv("GITHUB_REPO", "Devilfish281/ai_coder")
@@ -125,7 +125,7 @@ def test_setup_config_exposes_release_1_runtime_fields(monkeypatch, tmp_path) ->
     monkeypatch.setenv("MAX_ITERATIONS", "3")
     monkeypatch.setenv("RALPH_SANDBOX_MODE", "local")
 
-    config = _fresh_config()  #  Changed Code
+    config = _fresh_config()
 
     result = config.to_dict()
 
@@ -250,10 +250,10 @@ def test_setup_config_invalid_env_int_has_clear_error(monkeypatch, tmp_path) -> 
 
 def test_setup_config_rejects_invalid_max_iterations(monkeypatch, tmp_path) -> None:
     _clear_runtime_env(monkeypatch)
-    _prepare_valid_paths(monkeypatch, tmp_path)  #  Changed Code
+    _prepare_valid_paths(monkeypatch, tmp_path)
     monkeypatch.setenv("MAX_ITERATIONS", "0")
 
-    config = _fresh_config()  #  Changed Code
+    config = _fresh_config()
 
     with pytest.raises(ValueError, match="MAX_ITERATIONS must be at least 1"):
         config.validate_initialization()
@@ -272,10 +272,10 @@ def test_setup_config_rejects_unknown_agent(monkeypatch, tmp_path) -> None:
 
 def test_setup_config_rejects_unsupported_sandbox_mode(monkeypatch, tmp_path) -> None:
     _clear_runtime_env(monkeypatch)
-    _prepare_valid_paths(monkeypatch, tmp_path)  #  Changed Code
+    _prepare_valid_paths(monkeypatch, tmp_path)
     monkeypatch.setenv("RALPH_SANDBOX_MODE", "cloud")
 
-    config = _fresh_config()  #  Changed Code
+    config = _fresh_config()
 
     with pytest.raises(
         ValueError, match="RALPH_SANDBOX_MODE must be 'local' or 'docker'"

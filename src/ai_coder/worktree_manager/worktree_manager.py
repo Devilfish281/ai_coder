@@ -5,13 +5,16 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-# logger & setup_config
 from ai_coder.setup_config import c_setup_config
 from ai_coder.my_utils.env_loader import load_dotenv_once
 
 load_dotenv_once()
 setup_config = c_setup_config.get_instance()
 logger = setup_config.get_logger()
+
+DEFAULT_WORKTREE_BRANCH_PREFIX = "ralph"  #
+DEFAULT_WORKTREE_BRANCH_MAX_LENGTH = 80  #
+DEFAULT_WORKTREE_TITLE_FALLBACK = "work"  #
 
 
 @dataclass(frozen=True)
@@ -32,20 +35,37 @@ class WorktreePreserveResult:
 
 def i_worktree_sanitize_branch_name(raw_name: str) -> str:
     lowered_name = raw_name.strip().lower()
-    safe_name = re.sub(r"[^a-z0-9._/-]+", "-", lowered_name)
-    safe_name = re.sub(r"[-/]+", "-", safe_name)
-    safe_name = safe_name.strip("-./")
+    safe_name = re.sub(r"[^a-z0-9]+", "-", lowered_name)
+    safe_name = re.sub(r"-+", "-", safe_name)
+    safe_name = safe_name.strip("-")
 
-    return safe_name or "ralph-work"
+    return safe_name or DEFAULT_WORKTREE_TITLE_FALLBACK
 
 
 def i_worktree_branch_name(
     issue_number: int,
     issue_title: str,
-    prefix: str = "ralph",
+    prefix: str = DEFAULT_WORKTREE_BRANCH_PREFIX,
 ) -> str:
+    if issue_number < 1:  #
+        raise ValueError("issue_number must be a positive integer.")  #
+
+    safe_prefix = i_worktree_sanitize_branch_name(prefix)  #
     safe_title = i_worktree_sanitize_branch_name(issue_title)
-    return f"{prefix}-issue-{issue_number}-{safe_title}"  #  Changed Code
+    branch_prefix = f"{safe_prefix}-issue-{issue_number}-"  #
+    available_title_length = DEFAULT_WORKTREE_BRANCH_MAX_LENGTH - len(branch_prefix)  #
+
+    if available_title_length < len(DEFAULT_WORKTREE_TITLE_FALLBACK):  #
+        raise ValueError(
+            "branch prefix is too long for the configured branch limit."
+        )  #
+
+    shortened_title = safe_title[:available_title_length].strip("-")  #
+
+    if not shortened_title:  #
+        shortened_title = DEFAULT_WORKTREE_TITLE_FALLBACK  #
+
+    return f"{branch_prefix}{shortened_title}"
 
 
 def i_worktree_create_command(
@@ -59,8 +79,6 @@ def i_worktree_create_command(
     logger.info(f"Input worktree path: {worktree_path}")
     logger.info(f"Input branch name: {branch_name}")
 
-    # git -C C:\Users\ME\Documents\Python\2026\Projects\ai_coder\.ai_coder worktree add -b ralph/issue-1-confirm-release-1-runtime-contract C:\Users\ME\Documents\Python\2026\Projects\ai_coder_worktrees\ralph-issue-1-confirm-release-1-runtime-contract
-    #  -C  = Git, pretend you are inside this repository folder.
     return [
         "git",
         "-C",
@@ -89,16 +107,14 @@ def i_worktree_create(
     resolved_repo_path = Path(repo_path)
     branch_name = i_worktree_branch_name(issue_number, issue_title)
     resolved_worktree_root = (
-        resolved_repo_path / ".ai_coder" / "ai_coder_worktrees"  #  Changed Code
+        resolved_repo_path / ".ai_coder" / "ai_coder_worktrees"
         if worktree_root is None
         else Path(worktree_root)
     )
 
     logger.info(f"Resolved worktree root: {resolved_worktree_root}")
 
-    worktree_path = resolved_worktree_root / i_worktree_sanitize_branch_name(
-        branch_name
-    )
+    worktree_path = resolved_worktree_root / branch_name
     logger.info(f"Resolved worktree path: {worktree_path}")
 
     command = i_worktree_create_command(
@@ -106,23 +122,6 @@ def i_worktree_create(
         worktree_path,
         branch_name,
     )
-
-    # 'git', '-C', 'C:\\Users\\ME\\Documents\\Python\\2026\\Projects\\ai_coder', 'worktree', 'add', '-b', 'ralph-issue-1-minimal-local-ralph-loop', 'C:\\Users\\ME\\Documents\\Python\\2026\\Projects\\ai_coder\\.ai_coder\\ai_coder_worktrees\\ralph-issue-1-minimal-local-ralph-loop'
-
-    # Go to my ai_coder repository.
-    # Create a new Git worktree.
-    # Create a new branch named ralph-issue-1-minimal-local-ralph-loop.
-    # Put that branch into a new folder inside .ai_coder\ai_coder_worktrees.
-
-    # Git says -C <path> means “run Git as if Git was started in that folder,” so your -C path should be the real repo root:
-    # C:\Users\ME\Documents\Python\2026\Projects\ai_coder
-
-    # 'worktree'  Use the Git worktree feature.
-    # 'add' Create a new worktree.
-    # '-b' Create a new branch. The next text is the new branch name.
-    # Worktree path
-    # C:\Users\ME\Documents\Python\2026\Projects\ai_coder\.ai_coder\ai_coder_worktrees\ralph-issue-1-minimal-local-ralph-loop
-    # This is the new folder Git will create.
 
     logger.info(f"Prepared Git worktree creation command: {command}")
 
