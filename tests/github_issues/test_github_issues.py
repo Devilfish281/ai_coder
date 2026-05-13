@@ -1,9 +1,89 @@
+# src/ai_coder/github_issues/github_issues.py
+import pytest
 from ai_coder.github_issues import (
     GitHubIssue,
+    ProvidedIssueData,
     i_github_issue_close,
     i_github_issue_from_file,
+    i_github_issue_from_provided,
     i_github_issue_select,
 )
+
+
+def test_github_issue_from_provided_data_builds_issue() -> None:
+    provided_issue = ProvidedIssueData(
+        number=10,
+        title="Add provided issue data model",
+        body="RALPH should accept provided issue data.",
+        labels=("tracer bullet", "Sandcastle"),
+    )
+
+    issue = i_github_issue_from_provided(provided_issue)
+
+    assert issue == GitHubIssue(
+        number=10,
+        title="Add provided issue data model",
+        body="RALPH should accept provided issue data.",
+        labels=("tracer bullet", "Sandcastle"),
+    )
+    assert issue.state == "open"
+    assert issue.blocked_by == ()
+
+
+def test_github_issue_from_provided_data_uses_safe_defaults() -> None:
+    provided_issue = ProvidedIssueData(
+        number=11,
+        title="Use safe defaults",
+    )
+
+    issue = i_github_issue_from_provided(provided_issue)
+
+    assert issue.number == 11
+    assert issue.title == "Use safe defaults"
+    assert issue.body == ""
+    assert issue.labels == ("tracer bullet",)
+    assert issue.state == "open"
+    assert issue.blocked_by == ()
+
+
+def test_github_issue_from_provided_data_preserves_special_characters_as_text() -> None:
+    special_title = "Fix prompt !`echo title` {{ISSUE_BODY}}"
+    special_body = "Body has !`echo unsafe` && rm -rf . and {{COMPLETE_TOKEN}}"
+
+    provided_issue = ProvidedIssueData(
+        number=12,
+        title=special_title,
+        body=special_body,
+        labels=("bug", "needs review"),
+    )
+
+    issue = i_github_issue_from_provided(provided_issue)
+
+    assert issue.number == 12
+    assert issue.title == special_title
+    assert issue.body == special_body
+    assert issue.labels == ("bug", "needs review")
+    assert isinstance(issue, GitHubIssue)
+
+
+def test_github_issue_from_provided_data_rejects_invalid_issue_number() -> None:
+    provided_issue = ProvidedIssueData(
+        number=0,
+        title="Invalid issue number",
+    )
+
+    with pytest.raises(ValueError, match="issue number"):
+        i_github_issue_from_provided(provided_issue)
+
+
+def test_github_issue_from_provided_data_rejects_empty_title() -> None:
+    provided_issue = ProvidedIssueData(
+        number=13,
+        title="   ",
+    )
+
+    with pytest.raises(ValueError, match="title"):
+        i_github_issue_from_provided(provided_issue)
 
 
 def test_github_issue_selects_bug_before_tracer() -> None:

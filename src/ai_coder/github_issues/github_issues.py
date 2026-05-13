@@ -27,6 +27,14 @@ class GitHubIssue:
 
 
 @dataclass(frozen=True)
+class ProvidedIssueData:
+    number: int
+    title: str
+    body: str = ""
+    labels: tuple[str, ...] = ("tracer bullet",)
+
+
+@dataclass(frozen=True)
 class GitHubIssueCloseResult:
     issue_number: int
     closed: bool
@@ -52,6 +60,23 @@ def i_github_issue_from_file(
         title=title,
         body=body,
         labels=labels,
+    )
+
+
+def i_github_issue_from_provided(
+    provided_issue: ProvidedIssueData,
+) -> GitHubIssue:
+    if provided_issue.number < 1:
+        raise ValueError("provided issue number must be a positive integer")
+
+    if not provided_issue.title.strip():
+        raise ValueError("provided issue title cannot be empty")
+
+    return GitHubIssue(
+        number=provided_issue.number,
+        title=provided_issue.title,
+        body=provided_issue.body,
+        labels=_normalize_provided_issue_labels(provided_issue.labels),
     )
 
 
@@ -296,6 +321,20 @@ def _split_labels(raw_labels: str, default_label: str) -> tuple[str, ...]:
     )
 
     return labels or (default_label,)
+
+
+def _normalize_provided_issue_labels(
+    labels: Iterable[str] | None,
+    default_label: str = "tracer bullet",
+) -> tuple[str, ...]:
+    if labels is None:
+        return (default_label,)
+
+    normalized_labels = tuple(
+        str(label).strip() for label in labels if str(label).strip()
+    )
+
+    return normalized_labels or (default_label,)
 
 
 def _github_issue_from_gh_json(raw_issue: dict) -> GitHubIssue:
