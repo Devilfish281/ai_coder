@@ -68,6 +68,7 @@ def _patch_successful_worktree_create(monkeypatch, tmp_path) -> None:
     ):
         branch_name = f"ralph-issue-{issue_number}-test-worktree"
         worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir(parents=True, exist_ok=True)
 
         return WorktreeCreateResult(
             repo_path=tmp_path,
@@ -161,7 +162,7 @@ def test_main_runs_default_fake_issue(capsys, monkeypatch, tmp_path) -> None:
 def test_main_accepts_custom_fake_issue(capsys, monkeypatch, tmp_path) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
-    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)  #  Added Code
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
 
     _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
@@ -190,7 +191,7 @@ def test_main_accepts_custom_fake_issue(capsys, monkeypatch, tmp_path) -> None:
 def test_main_custom_issue_text_stays_inert(capsys, monkeypatch, tmp_path) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
-    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)  #  Added Code
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
 
     _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
@@ -262,7 +263,7 @@ def test_main_valid_cli_overrides_update_setup_config(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     prompt_file = _prepare_main_cli_test_config(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
-    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)  #  Added Code
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
 
     exit_code = main_module.main(
         [
