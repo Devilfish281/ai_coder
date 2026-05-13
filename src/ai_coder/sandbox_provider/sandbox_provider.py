@@ -134,7 +134,7 @@ class SandboxStartResult:
     provider_name: str
     started: bool
     message: str
-    handle: SandboxHandle
+    handle: SandboxHandle | None = None
 
 
 class SandboxHandle(Protocol):
@@ -570,18 +570,37 @@ def i_sandbox_start(
     )
 
     if sandbox_mode == "local":
-        handle: SandboxHandle = LocalSandboxProvider(working_directory)
+        resolved_working_directory = Path(working_directory)
 
+        if not resolved_working_directory.exists():
+            message = (
+                "Local sandbox startup failed: "
+                f"working directory does not exist: {resolved_working_directory}"
+            )
+            logger.error(message)
+
+            return SandboxStartResult(
+                working_directory=resolved_working_directory,
+                provider_name="local",
+                started=False,
+                message=message,
+                handle=None,
+            )
+
+        handle: SandboxHandle = LocalSandboxProvider(resolved_working_directory)
+
+        message = "Started local sandbox provider."
         logger.info(
-            "Started local sandbox provider. working_directory=%s",
-            working_directory,
+            "%s working_directory=%s",
+            message,
+            resolved_working_directory,
         )
 
         return SandboxStartResult(
-            working_directory=Path(working_directory),
+            working_directory=resolved_working_directory,
             provider_name="local",
             started=True,
-            message="Local sandbox startup is stubbed in this tracer-bullet slice.",
+            message=message,
             handle=handle,
         )
 
@@ -801,8 +820,8 @@ def _command_result_from_completed_process(
     """
 
     return CommandResult(
-        stdout=completed_process.stdout,
-        stderr=completed_process.stderr,
+        stdout=completed_process.stdout or "",
+        stderr=completed_process.stderr or "",
         exit_code=completed_process.returncode,
     )
 

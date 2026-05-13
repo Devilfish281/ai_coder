@@ -189,15 +189,42 @@ def i_ralph_run(
             status="blocked",
         )
 
+    # 5. Start a sandbox or local execution environment.
+
     logger.info("Step 5: Start a sandbox or local execution environment.")
     sandbox_result = i_sandbox_start(worktree_result.worktree_path)
-
     logger.info(sandbox_result.message)
+
+    if not sandbox_result.started:
+        logger.info(
+            "Sandbox startup failed. Preserving worktree before stopping RALPH."
+        )
+        cleanup_result = i_worktree_cleanup(
+            repo_path=repository_result.repo_path,
+            worktree_path=worktree_result.worktree_path,
+            completed=False,
+        )
+        logger.info(f"Worktree removed: {cleanup_result.removed}")
+        logger.info(f"Worktree preserved: {cleanup_result.preserved}")
+        logger.info(cleanup_result.reason)
+        logger.info(cleanup_result.message)
+
+        message_result = f"{sandbox_result.message}\n{cleanup_result.message}"
+
+        return RalphResult(
+            selected_issue=selected_issue,
+            prompt="",
+            orchestrator_result=None,
+            completed=False,
+            message=message_result,
+            status="blocked",
+        )
 
     logger.info("Step 5b: Discover prompt-safe repository context.")
     repository_context_result = i_repository_context_discover(
         repository_result.repo_path
     )
+
     logger.info(repository_context_result.prompt_summary)
 
     # 6. Give an AI coding agent a prompt.
@@ -257,8 +284,9 @@ def i_ralph_run(
 
     # 9. Run tests.
     logger.info("Step 9: Run tests.")
-    test_result = i_test_runner_run()
-
+    test_result = i_test_runner_run(  #  Changed Code
+        sandbox_handle=sandbox_result.handle,
+    )
     logger.info(f"Tests passed: {test_result.passed}")
     logger.info(f"Test command: {test_result.command}")
 

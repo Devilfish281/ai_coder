@@ -8,6 +8,7 @@ from ai_coder.repository_context import (
 
 from ai_coder.sandbox_provider import LocalSandboxProvider, SandboxStartResult
 from ai_coder.ralph import i_ralph_run
+from ai_coder.test_runner import TestRunResult
 from ai_coder.worktree_manager import WorktreeCleanupResult, WorktreeCreateResult
 
 import ai_coder.ralph.ralph as ralph_module
@@ -47,6 +48,7 @@ def _patch_successful_worktree_create(monkeypatch, tmp_path) -> None:
         worktree_root=None,
     ):
         worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir(parents=True, exist_ok=True)
 
         return WorktreeCreateResult(
             repo_path=tmp_path,
@@ -102,6 +104,189 @@ def _patch_successful_worktree_cleanup(monkeypatch, tmp_path) -> None:
         "i_worktree_cleanup",
         fake_worktree_cleanup,
     )
+
+
+def test_ralph_passes_sandbox_handle_to_test_runner(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+
+    fake_sandbox_handle = LocalSandboxProvider(tmp_path / "worktree")
+    received_test_runner_handles: list[object] = []
+
+    def fake_sandbox_start(working_directory):
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started local sandbox provider.",
+            handle=fake_sandbox_handle,
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        received_test_runner_handles.append(sandbox_handle)
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=15,
+                title="Add local sandbox provider",
+                body="RALPH should pass the sandbox handle to test running.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert received_test_runner_handles == [fake_sandbox_handle]
+
+
+def test_ralph_blocks_when_sandbox_startup_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    startup_message = f"Local sandbox startup failed: working directory does not exist: {worktree_path}"
+
+    def fake_sandbox_start(working_directory):
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=False,
+            message=startup_message,
+            handle=None,
+        )
+
+    def fail_repository_context_discover(*args, **kwargs):
+        raise AssertionError("i_repository_context_discover() should not be called.")
+
+    def fail_prompt_resolve(*args, **kwargs):
+        raise AssertionError("i_prompt_resolve() should not be called.")
+
+    def fail_orchestrator_run(*args, **kwargs):
+        raise AssertionError("i_orchestrator_run() should not be called.")
+
+    def fail_test_runner_run(*args, **kwargs):
+        raise AssertionError("i_test_runner_run() should not be called.")
+
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_worktree_cleanup(  #  Changed Code
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. RALPH did not complete.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fail_repository_context_discover,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_prompt_resolve",
+        fail_prompt_resolve,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_orchestrator_run",
+        fail_orchestrator_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fail_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,  #  Changed Code
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=15,
+                title="Add local sandbox provider",
+                body="RALPH should block when local sandbox startup fails.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 15
+    assert result.completed is False
+    assert result.status == "blocked"
+    assert result.prompt == ""
+    assert result.orchestrator_result is None
+    assert "Local sandbox startup failed" in result.message
+    assert str(worktree_path) in result.message
+    assert provider.run_count == 0
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": False,
+            "has_uncommitted_changes": None,
+        }
+    ]
+    assert "Preserved worktree" in result.message
 
 
 def test_ralph_stops_before_worktree_creation_when_repository_is_blocked(
@@ -192,6 +377,7 @@ def test_ralph_creates_worktree_when_repository_is_clean(
 
     worktree_calls: list[dict[str, object]] = []
     worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir(parents=True, exist_ok=True)
 
     def fake_worktree_create(
         repo_path,
@@ -382,6 +568,30 @@ def test_ralph_uses_created_worktree_path_for_sandbox_startup(
             handle=LocalSandboxProvider(worktree_path),
         )
 
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=True,
+            preserved=False,
+            reason="removed_clean_worktree",
+            message=f"Removed clean worktree: {worktree_path}",
+        )
+
     monkeypatch.setattr(
         ralph_module,
         "i_worktree_create",
@@ -391,6 +601,16 @@ def test_ralph_uses_created_worktree_path_for_sandbox_startup(
         ralph_module,
         "i_sandbox_start",
         fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
     )
 
     provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
@@ -752,9 +972,10 @@ def test_ralph_incomplete_run_preserves_worktree_and_reports_path(
     _patch_successful_worktree_create(monkeypatch, tmp_path)
 
     worktree_path = tmp_path / "worktree"
+
     cleanup_calls: list[dict[str, object]] = []
 
-    def fake_worktree_cleanup(
+    def fake_worktree_cleanup(  #  Changed Code
         repo_path,
         worktree_path,
         completed,
@@ -804,6 +1025,7 @@ def test_ralph_incomplete_run_preserves_worktree_and_reports_path(
     assert "Preserved worktree:" in result.message
     assert str(worktree_path) in result.message
     assert provider.run_count == 1
+
     assert cleanup_calls == [
         {
             "repo_path": tmp_path,
