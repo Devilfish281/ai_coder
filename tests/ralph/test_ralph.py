@@ -1,3 +1,4 @@
+# tests/ralph/test_ralph.py
 from ai_coder.agent_provider import MockAgentProvider
 from ai_coder.github_issues import GitHubIssue
 from ai_coder.repository_context import (
@@ -7,7 +8,7 @@ from ai_coder.repository_context import (
 
 from ai_coder.sandbox_provider import LocalSandboxProvider, SandboxStartResult
 from ai_coder.ralph import i_ralph_run
-from ai_coder.worktree_manager import WorktreeCreateResult
+from ai_coder.worktree_manager import WorktreeCleanupResult, WorktreeCreateResult
 
 import ai_coder.ralph.ralph as ralph_module
 from ai_coder.setup_config import c_setup_config
@@ -570,7 +571,9 @@ def test_ralph_returns_incomplete_status_when_orchestrator_does_not_complete(
     assert result.orchestrator_result is not None
     assert result.completed is False
     assert result.status == "incomplete"
-    assert result.message == "RALPH stopped before completion."
+    assert "RALPH stopped before completion." in result.message
+    assert "Preserved worktree:" in result.message
+    assert str(tmp_path / "worktree") in result.message
 
 
 def test_ralph_returns_clear_result_when_no_issue_is_selected(
@@ -699,3 +702,210 @@ def test_ralph_loads_local_issue_file_when_no_issue_is_provided(
     assert result.selected_issue is not None
     assert result.selected_issue.title == "Add local issue fallback"
     assert "RALPH should load this issue from a local markdown file." in result.prompt
+
+
+def test_ralph_incomplete_run_preserves_worktree_and_reports_path(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. RALPH did not complete.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Still working"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=14,
+                title="Add worktree preservation and cleanup rules",
+                body="RALPH should preserve incomplete worktrees.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        max_iterations=1,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is False
+    assert result.status == "incomplete"
+    assert "RALPH stopped before completion." in result.message
+    assert "Preserved worktree:" in result.message
+    assert str(worktree_path) in result.message
+    assert provider.run_count == 1
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": False,
+            "has_uncommitted_changes": None,
+        }
+    ]
+
+
+def test_ralph_successful_clean_run_reports_worktree_cleanup(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=True,
+            preserved=False,
+            reason="removed_clean_worktree",
+            message=f"Removed clean worktree: {worktree_path}",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=14,
+                title="Add worktree preservation and cleanup rules",
+                body="RALPH may remove successful clean worktrees.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert "RALPH completed the selected issue." in result.message
+    assert "Removed clean worktree:" in result.message
+    assert str(worktree_path) in result.message
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": True,
+            "has_uncommitted_changes": None,
+        }
+    ]
+
+
+def test_ralph_dirty_worktree_preservation_is_reported(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="worktree_dirty",
+            message=f"Preserved worktree: {worktree_path}. Git detected uncommitted changes.",
+            status_output=" M src/file.py\n?? new_file.py",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=14,
+                title="Add worktree preservation and cleanup rules",
+                body="RALPH should report dirty worktree preservation.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert "Preserved worktree:" in result.message
+    assert "Git detected uncommitted changes" in result.message
+    assert str(worktree_path) in result.message
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": True,
+            "has_uncommitted_changes": None,
+        }
+    ]

@@ -35,6 +35,17 @@ class WorktreePreserveResult:
 
 
 @dataclass(frozen=True)
+class WorktreeCleanupResult:
+    worktree_path: Path
+    removed: bool
+    preserved: bool
+    reason: str
+    message: str
+    command: tuple[str, ...] = ()
+    status_output: str = ""
+
+
+@dataclass(frozen=True)
 class _GitWorktreeCommandResult:
     stdout: str
     stderr: str
@@ -240,6 +251,140 @@ def i_worktree_preserve(
     )
 
 
+def i_worktree_cleanup(
+    repo_path: str | Path,
+    worktree_path: str | Path,
+    completed: bool,
+    has_uncommitted_changes: bool | None = None,
+) -> WorktreeCleanupResult:
+    logger.info("START: i_worktree_cleanup")
+
+    resolved_repo_path = Path(repo_path)
+    resolved_worktree_path = Path(worktree_path)
+
+    logger.info("Cleanup repository path: %s", resolved_repo_path)
+    logger.info("Cleanup worktree path: %s", resolved_worktree_path)
+    logger.info("Cleanup completed flag: %s", completed)
+    logger.info("Cleanup known dirty flag: %s", has_uncommitted_changes)
+
+    if not completed:
+        message = (
+            "Preserved worktree: "
+            f"{resolved_worktree_path}. "
+            "RALPH did not complete, so cleanup was skipped."
+        )
+        logger.info(message)
+        return WorktreeCleanupResult(
+            worktree_path=resolved_worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=message,
+        )
+
+    if has_uncommitted_changes is True:
+        message = (
+            "Preserved worktree: "
+            f"{resolved_worktree_path}. "
+            "Known uncommitted changes were reported."
+        )
+        logger.info(message)
+        return WorktreeCleanupResult(
+            worktree_path=resolved_worktree_path,
+            removed=False,
+            preserved=True,
+            reason="worktree_dirty",
+            message=message,
+        )
+
+    if has_uncommitted_changes is None:
+        status_command = [
+            "git",
+            "-C",
+            str(resolved_worktree_path),
+            "status",
+            "--porcelain",
+        ]
+        status_result = _run_worktree_git_command(status_command)
+
+        if not status_result.succeeded:
+            git_output = _git_command_message(status_result)
+            message = (
+                "Preserved worktree: "
+                f"{resolved_worktree_path}. "
+                "Could not safely verify worktree clean state, so cleanup was skipped. "
+                f"{git_output}"
+            )
+            logger.error(message)
+            return WorktreeCleanupResult(
+                worktree_path=resolved_worktree_path,
+                removed=False,
+                preserved=True,
+                reason="dirty_state_detection_failed",
+                message=message,
+                command=tuple(status_command),
+                status_output=git_output,
+            )
+
+        status_output = status_result.stdout.strip()
+
+        if status_output:
+            message = (
+                "Preserved worktree: "
+                f"{resolved_worktree_path}. "
+                "Git detected uncommitted changes."
+            )
+            logger.info(message)
+            return WorktreeCleanupResult(
+                worktree_path=resolved_worktree_path,
+                removed=False,
+                preserved=True,
+                reason="worktree_dirty",
+                message=message,
+                command=tuple(status_command),
+                status_output=status_output,
+            )
+
+    remove_command = [
+        "git",
+        "-C",
+        str(resolved_repo_path),
+        "worktree",
+        "remove",
+        str(resolved_worktree_path),
+    ]
+    remove_result = _run_worktree_git_command(remove_command)
+
+    if remove_result.succeeded:
+        message = f"Removed clean worktree: {resolved_worktree_path}"
+        logger.info(message)
+        return WorktreeCleanupResult(
+            worktree_path=resolved_worktree_path,
+            removed=True,
+            preserved=False,
+            reason="removed_clean_worktree",
+            message=message,
+            command=tuple(remove_command),
+        )
+
+    git_output = _git_command_message(remove_result)
+    message = (
+        "Preserved worktree: "
+        f"{resolved_worktree_path}. "
+        f"Failed to remove clean worktree: {git_output}"
+    )
+    logger.error(message)
+
+    return WorktreeCleanupResult(
+        worktree_path=resolved_worktree_path,
+        removed=False,
+        preserved=True,
+        reason="cleanup_failed",
+        message=message,
+        command=tuple(remove_command),
+    )
+
+
 def _run_worktree_create_command(
     command: list[str],
 ) -> _GitWorktreeCommandResult:
@@ -266,3 +411,43 @@ def _run_worktree_create_command(
         stderr=completed_process.stderr or "",
         exit_code=completed_process.returncode,
     )
+
+
+def _run_worktree_git_command(
+    command: list[str],
+) -> _GitWorktreeCommandResult:
+    logger.info("Running Git worktree command: %s", command)
+
+    try:
+        completed_process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        logger.error("Git worktree command failed before completion: %s", error)
+        return _GitWorktreeCommandResult(
+            stdout="",
+            stderr="",
+            exit_code=1,
+            error=str(error),
+        )
+
+    return _GitWorktreeCommandResult(
+        stdout=completed_process.stdout or "",
+        stderr=completed_process.stderr or "",
+        exit_code=completed_process.returncode,
+    )
+
+
+def _git_command_message(command_result: _GitWorktreeCommandResult) -> str:
+    if command_result.error:
+        return command_result.error
+
+    git_output = command_result.stderr.strip() or command_result.stdout.strip()
+
+    if git_output:
+        return git_output
+
+    return f"Git exited with code {command_result.exit_code}."

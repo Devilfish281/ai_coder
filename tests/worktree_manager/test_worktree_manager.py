@@ -6,6 +6,7 @@ import ai_coder.worktree_manager.worktree_manager as worktree_manager_module
 
 from ai_coder.worktree_manager import (
     i_worktree_branch_name,
+    i_worktree_cleanup,
     i_worktree_create,
     i_worktree_create_command,
     i_worktree_preserve,
@@ -277,3 +278,276 @@ def test_worktree_create_blocks_existing_worktree_path_before_running_git(
     assert result.created is False
     assert result.worktree_path == worktree_path
     assert "already exists" in result.message
+
+
+def test_worktree_cleanup_preserves_failed_run_without_running_git(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fail_run(command, capture_output, text, check):
+        raise AssertionError("subprocess.run() should not be called.")
+
+    monkeypatch.setattr(
+        worktree_manager_module,
+        "subprocess",
+        SimpleNamespace(run=fail_run),
+        raising=False,
+    )
+
+    worktree_path = tmp_path / "worktree"
+
+    result = i_worktree_cleanup(
+        repo_path=tmp_path / "repo",
+        worktree_path=worktree_path,
+        completed=False,
+    )
+
+    assert result.removed is False
+    assert result.preserved is True
+    assert result.reason == "run_incomplete"
+    assert result.worktree_path == worktree_path
+    assert str(worktree_path) in result.message
+    assert "Preserved worktree" in result.message
+
+
+def test_worktree_cleanup_preserves_known_dirty_worktree_without_running_git(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fail_run(command, capture_output, text, check):
+        raise AssertionError("subprocess.run() should not be called.")
+
+    monkeypatch.setattr(
+        worktree_manager_module,
+        "subprocess",
+        SimpleNamespace(run=fail_run),
+        raising=False,
+    )
+
+    worktree_path = tmp_path / "worktree"
+
+    result = i_worktree_cleanup(
+        repo_path=tmp_path / "repo",
+        worktree_path=worktree_path,
+        completed=True,
+        has_uncommitted_changes=True,
+    )
+
+    assert result.removed is False
+    assert result.preserved is True
+    assert result.reason == "worktree_dirty"
+    assert result.worktree_path == worktree_path
+    assert str(worktree_path) in result.message
+    assert "Preserved worktree" in result.message
+
+
+def test_worktree_cleanup_preserves_git_detected_dirty_worktree(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured_commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, text, check):
+        captured_commands.append(command)
+
+        if len(captured_commands) > 1:
+            raise AssertionError("git worktree remove should not be called.")
+
+        return SimpleNamespace(
+            returncode=0,
+            stdout=" M src/file.py\n?? new_file.py\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        worktree_manager_module,
+        "subprocess",
+        SimpleNamespace(run=fake_run),
+        raising=False,
+    )
+
+    repo_path = tmp_path / "repo"
+    worktree_path = tmp_path / "worktree"
+
+    result = i_worktree_cleanup(
+        repo_path=repo_path,
+        worktree_path=worktree_path,
+        completed=True,
+    )
+
+    assert result.removed is False
+    assert result.preserved is True
+    assert result.reason == "worktree_dirty"
+    assert "src/file.py" in result.status_output
+    assert "new_file.py" in result.status_output
+    assert str(worktree_path) in result.message
+    assert captured_commands == [
+        [
+            "git",
+            "-C",
+            str(worktree_path),
+            "status",
+            "--porcelain",
+        ]
+    ]
+
+
+def test_worktree_cleanup_removes_successful_clean_worktree(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured_commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, text, check):
+        captured_commands.append(command)
+
+        if len(captured_commands) == 1:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+
+        return SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        worktree_manager_module,
+        "subprocess",
+        SimpleNamespace(run=fake_run),
+        raising=False,
+    )
+
+    repo_path = tmp_path / "repo"
+    worktree_path = tmp_path / "worktree"
+
+    result = i_worktree_cleanup(
+        repo_path=repo_path,
+        worktree_path=worktree_path,
+        completed=True,
+    )
+
+    expected_remove_command = (
+        "git",
+        "-C",
+        str(repo_path),
+        "worktree",
+        "remove",
+        str(worktree_path),
+    )
+
+    assert result.removed is True
+    assert result.preserved is False
+    assert result.reason == "removed_clean_worktree"
+    assert result.command == expected_remove_command
+    assert "Removed clean worktree" in result.message
+    assert captured_commands == [
+        [
+            "git",
+            "-C",
+            str(worktree_path),
+            "status",
+            "--porcelain",
+        ],
+        list(expected_remove_command),
+    ]
+
+
+def test_worktree_cleanup_preserves_worktree_when_remove_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured_commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, text, check):
+        captured_commands.append(command)
+
+        if len(captured_commands) == 1:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+
+        return SimpleNamespace(
+            returncode=128,
+            stdout="",
+            stderr="fatal: worktree contains modified or untracked files",
+        )
+
+    monkeypatch.setattr(
+        worktree_manager_module,
+        "subprocess",
+        SimpleNamespace(run=fake_run),
+        raising=False,
+    )
+
+    repo_path = tmp_path / "repo"
+    worktree_path = tmp_path / "worktree"
+
+    result = i_worktree_cleanup(
+        repo_path=repo_path,
+        worktree_path=worktree_path,
+        completed=True,
+    )
+
+    assert result.removed is False
+    assert result.preserved is True
+    assert result.reason == "cleanup_failed"
+    assert "fatal: worktree contains modified or untracked files" in result.message
+    assert str(worktree_path) in result.message
+    assert len(captured_commands) == 2
+
+
+def test_worktree_cleanup_preserves_when_dirty_state_detection_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured_commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, text, check):
+        captured_commands.append(command)
+
+        if len(captured_commands) > 1:
+            raise AssertionError("git worktree remove should not be called.")
+
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="fatal: not a git repository",
+        )
+
+    monkeypatch.setattr(
+        worktree_manager_module,
+        "subprocess",
+        SimpleNamespace(run=fake_run),
+        raising=False,
+    )
+
+    repo_path = tmp_path / "repo"
+    worktree_path = tmp_path / "worktree"
+
+    result = i_worktree_cleanup(
+        repo_path=repo_path,
+        worktree_path=worktree_path,
+        completed=True,
+    )
+
+    assert result.removed is False
+    assert result.preserved is True
+    assert result.reason == "dirty_state_detection_failed"
+    assert "Could not safely verify worktree clean state" in result.message
+    assert "fatal: not a git repository" in result.message
+    assert str(worktree_path) in result.message
+    assert captured_commands == [
+        [
+            "git",
+            "-C",
+            str(worktree_path),
+            "status",
+            "--porcelain",
+        ]
+    ]
