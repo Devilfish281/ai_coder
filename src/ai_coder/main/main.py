@@ -400,4 +400,4 @@ def _build_fake_issue_from_config() -> GitHubIssue:
         labels=(setup_config.label,),
     )
 
-    return i_github_issue_from_provided(provided_issue)  #  Changed Code
+    return i_github_issue_from_provided(provided_issue)

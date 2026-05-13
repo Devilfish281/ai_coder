@@ -346,7 +346,7 @@ class DockerSandboxProvider:
 
         sandbox_cwd = self._resolve_sandbox_cwd(cwd)
         env_args = self._build_env_args()
-        secret_env_args = self._build_secret_env_args()  #  Added Code
+        secret_env_args = self._build_secret_env_args()
         volume_args = self._build_volume_args()
 
         docker_command = [
@@ -354,7 +354,7 @@ class DockerSandboxProvider:
             "run",
             "--rm",
             *env_args,
-            *secret_env_args,  #  Added Code
+            *secret_env_args,
             *volume_args,
             "-w",
             sandbox_cwd,
@@ -581,7 +581,7 @@ def i_sandbox_start(
             working_directory=Path(working_directory),
             provider_name="local",
             started=True,
-            message="Local sandbox startup is stubbed in this tracer-bullet slice.",  #  Changed Code
+            message="Local sandbox startup is stubbed in this tracer-bullet slice.",
             handle=handle,
         )
 
