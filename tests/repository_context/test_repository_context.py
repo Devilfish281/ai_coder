@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -343,6 +344,345 @@ def test_repository_context_discovery_keeps_prompt_summary_safe(
     assert "node_modules" not in result.prompt_summary
     assert ".pytest_cache" not in result.prompt_summary
     assert "reportlog.log" not in result.prompt_summary
+
+
+def test_repository_context_discovery_excludes_common_unsafe_directories(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_root / "poetry.lock").write_text("", encoding="utf-8")
+    (repo_root / "src").mkdir()
+    (repo_root / "tests").mkdir()
+
+    for directory_name in (
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+        "dist",
+        "build",
+    ):
+        (repo_root / directory_name).mkdir()
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert "pyproject.toml" in result.prompt_summary
+    assert "poetry.lock" in result.prompt_summary
+    assert "src/" in result.prompt_summary
+    assert "tests/" in result.prompt_summary
+
+    assert ".git" not in result.prompt_summary
+    assert ".venv" not in result.prompt_summary
+    assert "venv" not in result.project_files
+    assert "__pycache__" not in result.prompt_summary
+    assert ".pytest_cache" not in result.prompt_summary
+    assert ".mypy_cache" not in result.prompt_summary
+    assert ".ruff_cache" not in result.prompt_summary
+    assert "node_modules" not in result.prompt_summary
+    assert "dist" not in result.project_files
+    assert "build" not in result.project_files
+
+
+def test_repository_context_discovery_excludes_secret_environment_files(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_root / "tests").mkdir()
+    (repo_root / ".env").write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
+    (repo_root / ".env.local").write_text("LOCAL_SECRET=secret\n", encoding="utf-8")
+    (repo_root / ".env.production").write_text("PROD_SECRET=secret\n", encoding="utf-8")
+    (repo_root / ".env.example").write_text("EXAMPLE_SECRET=secret\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert "pyproject.toml" in result.project_files
+    assert "tests/" in result.project_files
+    assert ".env" not in result.prompt_summary
+    assert ".env.local" not in result.prompt_summary
+    assert ".env.production" not in result.prompt_summary
+    assert ".env.example" not in result.prompt_summary
+    assert ".env" not in result.project_files
+    assert ".env.local" not in result.project_files
+    assert ".env.production" not in result.project_files
+    assert ".env.example" not in result.project_files
+
+
+def test_repository_context_discovery_excludes_generated_logs_and_reports(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_root / "tests").mkdir()
+
+    logs_dir = repo_root / "logs"
+    logs_dir.mkdir()
+    (logs_dir / "reportlog.log").write_text("log text\n", encoding="utf-8")
+
+    var_logs_dir = repo_root / "var" / "logs"
+    var_logs_dir.mkdir(parents=True)
+    (var_logs_dir / "reportlog.log").write_text("log text\n", encoding="utf-8")
+
+    reports_dir = repo_root / "reports"
+    reports_dir.mkdir()
+    (reports_dir / "summary.md").write_text("# Generated report\n", encoding="utf-8")
+
+    var_reports_dir = repo_root / "var" / "reports"
+    var_reports_dir.mkdir(parents=True)
+    (var_reports_dir / "summary.md").write_text(
+        "# Generated report\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert "pyproject.toml" in result.prompt_summary
+    assert "tests/" in result.prompt_summary
+    assert "reportlog.log" not in result.prompt_summary
+    assert "logs/" not in result.project_files
+    assert "var/logs" not in result.prompt_summary
+    assert "reports/" not in result.project_files
+    assert "var/reports" not in result.prompt_summary
+    assert "summary.md" not in result.prompt_summary
+
+
+def test_repository_context_discovery_excludes_large_binary_like_files(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_root / "tests").mkdir()
+
+    for file_name in (
+        "diagram.png",
+        "photo.jpg",
+        "manual.pdf",
+        "archive.zip",
+        "program.exe",
+        "library.dll",
+        "module.pyc",
+    ):
+        (repo_root / file_name).write_bytes(b"binary-like test data")
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert "pyproject.toml" in result.prompt_summary
+    assert "tests/" in result.prompt_summary
+    assert "diagram.png" not in result.prompt_summary
+    assert "photo.jpg" not in result.prompt_summary
+    assert "manual.pdf" not in result.prompt_summary
+    assert "archive.zip" not in result.prompt_summary
+    assert "program.exe" not in result.prompt_summary
+    assert "library.dll" not in result.prompt_summary
+    assert "module.pyc" not in result.prompt_summary
+
+
+def test_repository_context_discovery_keeps_safe_project_markers(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    (repo_root / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\n", encoding="utf-8"
+    )
+    (repo_root / "poetry.lock").write_text("", encoding="utf-8")
+    (repo_root / "README.md").write_text("# Safe Project\n", encoding="utf-8")
+    (repo_root / "src").mkdir()
+    (repo_root / "tests").mkdir()
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert result.package_manager == "poetry"
+    assert result.test_command == "poetry run pytest"
+    assert result.test_command_source == "inferred_from_poetry"
+    assert "pyproject.toml" in result.project_files
+    assert "poetry.lock" in result.project_files
+    assert "README.md" in result.project_files
+    assert "src/" in result.project_files
+    assert "tests/" in result.project_files
+    assert "Python project" in result.useful_signals
+    assert "Uses Poetry" in result.useful_signals
+    assert "Uses pytest" in result.useful_signals
+    assert "poetry run pytest" in result.prompt_summary
+
+
+def test_repository_context_exclusion_policy_is_easy_to_extend() -> None:
+    assert isinstance(repository_context_module.EXCLUDED_DIRECTORY_NAMES, tuple)
+    assert isinstance(repository_context_module.EXCLUDED_FILE_NAMES, tuple)
+    assert isinstance(repository_context_module.EXCLUDED_FILE_PATTERNS, tuple)
+    assert isinstance(repository_context_module.GENERATED_DIRECTORY_PATHS, tuple)
+    assert isinstance(repository_context_module.GENERATED_FILE_SUFFIXES, tuple)
+    assert isinstance(repository_context_module.LARGE_BINARY_FILE_SUFFIXES, tuple)
+
+    assert ".git" in repository_context_module.EXCLUDED_DIRECTORY_NAMES
+    assert ".env" in repository_context_module.EXCLUDED_FILE_NAMES
+    assert ".env.*" in repository_context_module.EXCLUDED_FILE_PATTERNS
+    assert "var/logs" in repository_context_module.GENERATED_DIRECTORY_PATHS
+    assert ".log" in repository_context_module.GENERATED_FILE_SUFFIXES
+    assert ".pdf" in repository_context_module.LARGE_BINARY_FILE_SUFFIXES
+
+
+def test_repository_context_project_file_collection_applies_exclusion_policy(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_root / "poetry.lock").write_text("", encoding="utf-8")
+    (repo_root / "README.md").write_text("# Safe Project\n", encoding="utf-8")
+    (repo_root / ".env").write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
+    (repo_root / ".env.local").write_text("LOCAL_SECRET=secret\n", encoding="utf-8")
+    (repo_root / "manual.pdf").write_bytes(b"binary-like test data")
+
+    (repo_root / "src").mkdir()
+    (repo_root / "tests").mkdir()
+    (repo_root / ".git").mkdir()
+    (repo_root / ".venv").mkdir()
+    (repo_root / "node_modules").mkdir()
+    (repo_root / "logs").mkdir()
+    (repo_root / "reports").mkdir()
+
+    monkeypatch.setattr(
+        repository_context_module,
+        "SAFE_PROJECT_FILE_NAMES",
+        (
+            "pyproject.toml",
+            "poetry.lock",
+            "README.md",
+            ".env",
+            ".env.local",
+            "manual.pdf",
+        ),
+    )
+    monkeypatch.setattr(
+        repository_context_module,
+        "SAFE_PROJECT_DIRECTORY_NAMES",
+        (
+            "src",
+            "tests",
+            ".git",
+            ".venv",
+            "node_modules",
+            "logs",
+            "reports",
+        ),
+    )
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert result.project_files == (
+        "pyproject.toml",
+        "poetry.lock",
+        "README.md",
+        "src/",
+        "tests/",
+    )
+    assert ".env" not in result.project_files
+    assert ".env.local" not in result.project_files
+    assert "manual.pdf" not in result.project_files
+    assert ".git/" not in result.project_files
+    assert ".venv/" not in result.project_files
+    assert "node_modules/" not in result.project_files
+    assert "logs/" not in result.project_files
+    assert "reports/" not in result.project_files
+
+
+def test_repository_context_discovery_does_not_add_broad_root_listing_yet(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_root / "poetry.lock").write_text("", encoding="utf-8")
+    (repo_root / "README.md").write_text("# Safe Project\n", encoding="utf-8")
+    (repo_root / "src").mkdir()
+    (repo_root / "tests").mkdir()
+
+    (repo_root / "LICENSE").write_text("MIT\n", encoding="utf-8")
+    (repo_root / "CONTRIBUTING.md").write_text("# Contributing\n", encoding="utf-8")
+    (repo_root / "docs").mkdir()
+    (repo_root / "scripts").mkdir()
+
+    monkeypatch.setattr(
+        repository_context_module.setup_config,
+        "test_command",
+        "",
+    )
+
+    result = repository_context_module.i_repository_context_discover(repo_root)
+
+    assert result.project_files == (
+        "pyproject.toml",
+        "poetry.lock",
+        "README.md",
+        "src/",
+        "tests/",
+    )
+    assert "LICENSE" not in result.project_files
+    assert "CONTRIBUTING.md" not in result.project_files
+    assert "docs/" not in result.project_files
+    assert "scripts/" not in result.project_files
+    assert "LICENSE" not in result.prompt_summary
+    assert "CONTRIBUTING.md" not in result.prompt_summary
+    assert "docs/" not in result.prompt_summary
+    assert "scripts/" not in result.prompt_summary
 
 
 def test_repository_context_discovery_returns_unknown_context_for_missing_path(
