@@ -65,9 +65,11 @@ from ai_coder.repository_context import (
 from ai_coder.sandbox_provider import i_sandbox_start
 from ai_coder.sync_out import i_sync_out_merge
 from ai_coder.test_runner import i_test_runner_run
+
+
 from ai_coder.worktree_manager import (
+    i_worktree_cleanup,
     i_worktree_create,
-    i_worktree_preserve,
 )
 
 from ai_coder.setup_config import c_setup_config
@@ -285,21 +287,25 @@ def i_ralph_run(
 
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
     logger.info(
-        "Step 12: Preserve the worktree if there are uncommitted changes or a failure."
-    )
-    preserve_result = i_worktree_preserve(
+        "Step 12: Preserve or clean up the worktree based on final run state."
+    )  #  Changed Code
+    cleanup_result = i_worktree_cleanup(
+        repo_path=repository_result.repo_path,
+        worktree_path=worktree_result.worktree_path,
         completed=orchestrator_result.completed,
-        has_uncommitted_changes=False,
     )
 
-    logger.info(f"Worktree preserved: {preserve_result.preserved}")
-    logger.info(preserve_result.reason)
+    logger.info(f"Worktree removed: {cleanup_result.removed}")
+    logger.info(f"Worktree preserved: {cleanup_result.preserved}")
+    logger.info(cleanup_result.reason)
+    logger.info(cleanup_result.message)
 
-    message_result = (
+    workflow_message = (
         "RALPH completed the selected issue."
         if orchestrator_result.completed
         else "RALPH stopped before completion."
     )
+    message_result = f"{workflow_message}\n{cleanup_result.message}"  #  Changed Code
 
     logger.info(f"Selected issue: #{selected_issue.number} - {selected_issue.title}")
     # logger.info(f"Prompt given to agent:\n{prompt}")
