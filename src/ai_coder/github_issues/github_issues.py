@@ -24,6 +24,7 @@ class GitHubIssue:
     labels: tuple[str, ...] = field(default_factory=tuple)
     state: str = "open"
     blocked_by: tuple[int, ...] = field(default_factory=tuple)
+    assignees: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,20 @@ class ProvidedIssueData:
     title: str
     body: str = ""
     labels: tuple[str, ...] = ("tracer bullet",)
+
+
+@dataclass(frozen=True)
+class GitHubIssueSkipReason:
+    issue_number: int
+    reason: str
+    message: str
+
+
+@dataclass(frozen=True)
+class GitHubIssueSelectionResult:
+    selected_issue: GitHubIssue | None
+    skipped_issues: tuple[GitHubIssueSkipReason, ...] = field(default_factory=tuple)
+    message: str = ""
 
 
 @dataclass(frozen=True)
@@ -88,7 +103,7 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
         "--state",
         "open",
         "--json",
-        "number,title,body,labels",
+        "number,title,body,labels,assignees",
     ]
 
     if label and label.strip():
@@ -111,25 +126,52 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
     return tuple(_github_issue_from_gh_json(raw_issue) for raw_issue in raw_issues)
 
 
-def i_github_issue_select(issues: Iterable[GitHubIssue]) -> GitHubIssue | None:
-    logger.info("START: Selecting issue from list of %d issues.", len(list(issues)))
-    logger.info("Selecting issue from list of %d issues.", len(list(issues)))
+def i_github_issue_select_actionable(
+    issues: Iterable[GitHubIssue],
+) -> GitHubIssueSelectionResult:
     issue_list = list(issues)
+    logger.info(
+        "START: Selecting actionable issue from list of %d issues.", len(issue_list)
+    )
+
     open_issue_numbers = {
         issue.number for issue in issue_list if issue.state.lower() == "open"
     }
 
-    actionable_issues = [
-        issue
-        for issue in issue_list
-        if issue.state.lower() == "open"
-        and not any(blocker in open_issue_numbers for blocker in issue.blocked_by)
-    ]
+    actionable_issues: list[GitHubIssue] = []
+    skipped_issues: list[GitHubIssueSkipReason] = []
+
+    for issue in issue_list:
+        skip_reason = _evaluate_issue_actionability(
+            issue=issue,
+            open_issue_numbers=open_issue_numbers,
+        )
+
+        if skip_reason is not None:
+            skipped_issues.append(skip_reason)
+            continue
+
+        actionable_issues.append(issue)
 
     if not actionable_issues:
-        return None
+        return GitHubIssueSelectionResult(
+            selected_issue=None,
+            skipped_issues=tuple(skipped_issues),
+            message="No actionable issue selected.",
+        )
 
-    return min(actionable_issues, key=_issue_sort_key)
+    selected_issue = min(actionable_issues, key=_issue_sort_key)
+
+    return GitHubIssueSelectionResult(
+        selected_issue=selected_issue,
+        skipped_issues=tuple(skipped_issues),
+        message=f"Selected issue #{selected_issue.number}: {selected_issue.title}.",
+    )
+
+
+def i_github_issue_select(issues: Iterable[GitHubIssue]) -> GitHubIssue | None:
+    result = i_github_issue_select_actionable(issues)
+    return result.selected_issue
 
 
 def i_github_issue_close(
@@ -337,6 +379,127 @@ def _normalize_provided_issue_labels(
     return normalized_labels or (default_label,)
 
 
+ACTIONABLE_LABEL_MARKERS = (
+    "bug",
+    "tracer",
+    "feature",
+    "enhancement",
+    "polish",
+    "refactor",
+)
+
+UNSAFE_ISSUE_TEXT_MARKERS = (
+    "delete repo",
+    "delete repository",
+    "rm -rf",
+    "format drive",
+    "disable tests",
+    "skip tests",
+    "ignore tests",
+    "exfiltrate",
+    "steal token",
+    "print secrets",
+    "dump env",
+)
+
+
+def _evaluate_issue_actionability(
+    issue: GitHubIssue,
+    open_issue_numbers: set[int],
+) -> GitHubIssueSkipReason | None:
+    if issue.state.lower() != "open":
+        return _skip_reason(
+            issue=issue,
+            reason="closed",
+            message=f"Skipped issue #{issue.number} because it is not open.",
+        )
+
+    open_blockers = tuple(
+        blocker for blocker in issue.blocked_by if blocker in open_issue_numbers
+    )
+
+    if open_blockers:
+        return _skip_reason(
+            issue=issue,
+            reason="blocked",
+            message=(
+                f"Skipped issue #{issue.number} because it is blocked by "
+                f"open issue #{open_blockers[0]}."
+            ),
+        )
+
+    if issue.assignees:
+        return _skip_reason(
+            issue=issue,
+            reason="assigned",
+            message=f"Skipped issue #{issue.number} because it is already assigned.",
+        )
+
+    if _issue_is_unsafe(issue):
+        return _skip_reason(
+            issue=issue,
+            reason="unsafe",
+            message=(
+                f"Skipped issue #{issue.number} because it contains unsafe "
+                "automation instructions."
+            ),
+        )
+
+    if _issue_is_vague(issue):
+        return _skip_reason(
+            issue=issue,
+            reason="vague",
+            message=(
+                f"Skipped issue #{issue.number} because it does not include "
+                "enough actionable detail."
+            ),
+        )
+
+    return None
+
+
+def _issue_is_vague(issue: GitHubIssue) -> bool:
+    title_word_count = len(issue.title.split())
+    body_character_count = len("".join(issue.body.split()))
+    label_text = " ".join(issue.labels).lower()
+
+    has_actionable_label = any(
+        marker in label_text for marker in ACTIONABLE_LABEL_MARKERS
+    )
+
+    return (
+        title_word_count < 3 and body_character_count < 20 and not has_actionable_label
+    )
+
+
+def _issue_is_unsafe(issue: GitHubIssue) -> bool:
+    issue_text = _issue_text_for_actionability(issue)
+
+    return any(marker in issue_text for marker in UNSAFE_ISSUE_TEXT_MARKERS)
+
+
+def _issue_text_for_actionability(issue: GitHubIssue) -> str:
+    return " ".join(
+        (
+            issue.title,
+            issue.body,
+            *issue.labels,
+        )
+    ).lower()
+
+
+def _skip_reason(
+    issue: GitHubIssue,
+    reason: str,
+    message: str,
+) -> GitHubIssueSkipReason:
+    return GitHubIssueSkipReason(
+        issue_number=issue.number,
+        reason=reason,
+        message=message,
+    )
+
+
 def _github_issue_from_gh_json(raw_issue: dict) -> GitHubIssue:
     raw_labels = raw_issue.get("labels", [])
     label_names = tuple(
@@ -345,12 +508,35 @@ def _github_issue_from_gh_json(raw_issue: dict) -> GitHubIssue:
         if str(label.get("name", "")).strip()
     )
 
+    raw_assignees = raw_issue.get("assignees", [])
+    assignee_names = tuple(
+        _assignee_name_from_gh_json(assignee)
+        for assignee in raw_assignees
+        if _assignee_name_from_gh_json(assignee)
+    )
+
     return GitHubIssue(
         number=int(raw_issue["number"]),
         title=str(raw_issue.get("title", "")),
         body=str(raw_issue.get("body", "")),
         labels=label_names,
+        assignees=assignee_names,
     )
+
+
+def _assignee_name_from_gh_json(raw_assignee: object) -> str:
+    if not isinstance(raw_assignee, dict):
+        return str(raw_assignee).strip()
+
+    login = str(raw_assignee.get("login", "")).strip()
+    if login:
+        return login
+
+    name = str(raw_assignee.get("name", "")).strip()
+    if name:
+        return name
+
+    return ""
 
 
 def _issue_sort_key(issue: GitHubIssue) -> tuple[int, int]:

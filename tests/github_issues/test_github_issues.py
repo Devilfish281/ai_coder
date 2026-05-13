@@ -1,12 +1,22 @@
 # src/ai_coder/github_issues/github_issues.py
+from types import SimpleNamespace
+
 import pytest
+
+
+import ai_coder.github_issues.github_issues as github_issues_module
+
 from ai_coder.github_issues import (
     GitHubIssue,
+    GitHubIssueSelectionResult,
+    GitHubIssueSkipReason,
     ProvidedIssueData,
     i_github_issue_close,
     i_github_issue_from_file,
     i_github_issue_from_provided,
+    i_github_issue_list,
     i_github_issue_select,
+    i_github_issue_select_actionable,
 )
 
 
@@ -84,6 +94,213 @@ def test_github_issue_from_provided_data_rejects_empty_title() -> None:
 
     with pytest.raises(ValueError, match="title"):
         i_github_issue_from_provided(provided_issue)
+
+
+def test_github_issue_select_actionable_returns_selection_result() -> None:
+    issues = [
+        GitHubIssue(
+            number=6,
+            title="Add actionable issue selection seam",
+            body="RALPH should choose one actionable issue and report skipped reasons.",
+            labels=("tracer bullet",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert isinstance(result, GitHubIssueSelectionResult)
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 6
+    assert result.skipped_issues == ()
+    assert result.message == "Selected issue #6: Add actionable issue selection seam."
+
+
+def test_github_issue_select_actionable_records_closed_skip_reason() -> None:
+    issues = [
+        GitHubIssue(
+            number=3,
+            title="Closed bug",
+            body="This issue is already closed.",
+            labels=("bug",),
+            state="closed",
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.message == "No actionable issue selected."
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=3,
+            reason="closed",
+            message="Skipped issue #3 because it is not open.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_records_blocked_skip_reason() -> None:
+    issues = [
+        GitHubIssue(
+            number=1,
+            title="Parent setup",
+            body="Parent work must happen first.",
+            labels=("tracer bullet",),
+        ),
+        GitHubIssue(
+            number=2,
+            title="Fix blocked bug",
+            body="This bug depends on the parent setup issue.",
+            labels=("bug",),
+            blocked_by=(1,),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 1
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=2,
+            reason="blocked",
+            message="Skipped issue #2 because it is blocked by open issue #1.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_records_assigned_skip_reason() -> None:
+    issues = [
+        GitHubIssue(
+            number=3,
+            title="Fix assigned bug",
+            body="This issue is already assigned to a person.",
+            labels=("bug",),
+            assignees=("octocat",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=3,
+            reason="assigned",
+            message="Skipped issue #3 because it is already assigned.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_records_vague_skip_reason() -> None:
+    issues = [
+        GitHubIssue(
+            number=4,
+            title="Help",
+            body="",
+            labels=(),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=4,
+            reason="vague",
+            message="Skipped issue #4 because it does not include enough actionable detail.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_records_unsafe_skip_reason() -> None:
+    issues = [
+        GitHubIssue(
+            number=5,
+            title="Delete repo",
+            body="Run rm -rf . and skip tests.",
+            labels=("bug",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=5,
+            reason="unsafe",
+            message="Skipped issue #5 because it contains unsafe automation instructions.",
+        ),
+    )
+
+
+def test_github_issue_select_compatibility_wrapper_returns_selected_issue() -> None:
+    issues = [
+        GitHubIssue(
+            number=8,
+            title="Polish README",
+            body="Improve README wording.",
+            labels=("polish",),
+        ),
+        GitHubIssue(
+            number=7,
+            title="Fix user-facing bug",
+            body="Fix broken behavior that affects the user.",
+            labels=("bug",),
+        ),
+    ]
+
+    selected_issue = i_github_issue_select(issues)
+
+    assert selected_issue is not None
+    assert selected_issue.number == 7
+
+
+def test_github_issue_list_requests_assignees_once(monkeypatch) -> None:
+    captured_command: list[str] = []
+
+    def fake_run(command, capture_output, text, check):
+        captured_command.extend(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                '[{"number":20,'
+                '"title":"Fix assigned issue parsing",'
+                '"body":"RALPH should parse assignees from GitHub issue JSON.",'
+                '"labels":[{"name":"bug"}],'
+                '"assignees":[{"login":"octocat"}]}]'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    issues = i_github_issue_list()
+
+    assert captured_command == [
+        "gh",
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--json",
+        "number,title,body,labels,assignees",
+    ]
+    assert issues == (
+        GitHubIssue(
+            number=20,
+            title="Fix assigned issue parsing",
+            body="RALPH should parse assignees from GitHub issue JSON.",
+            labels=("bug",),
+            assignees=("octocat",),
+        ),
+    )
 
 
 def test_github_issue_selects_bug_before_tracer() -> None:
