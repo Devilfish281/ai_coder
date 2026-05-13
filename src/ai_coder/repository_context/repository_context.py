@@ -1,6 +1,7 @@
 # src/ai_coder/repository_context/repository_context.py
 from __future__ import annotations
 
+import fnmatch
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -24,6 +25,51 @@ SAFE_PROJECT_FILE_NAMES = (
 SAFE_PROJECT_DIRECTORY_NAMES = (
     "src",
     "tests",
+)
+
+EXCLUDED_DIRECTORY_NAMES = (
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+    "dist",
+    "build",
+)
+
+EXCLUDED_FILE_NAMES = (".env",)
+
+EXCLUDED_FILE_PATTERNS = (".env.*",)
+
+GENERATED_DIRECTORY_PATHS = (
+    "logs",
+    "var/logs",
+    "reports",
+    "var/reports",
+)
+
+GENERATED_FILE_SUFFIXES = (".log",)
+
+LARGE_BINARY_FILE_SUFFIXES = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".ico",
+    ".pdf",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".7z",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".pyc",
 )
 
 
@@ -264,15 +310,69 @@ def _run_git_command(command: Sequence[str]) -> GitCommandResult:
     )
 
 
+def _should_exclude_context_path(path: Path, repo_root: Path) -> bool:
+    relative_path = _relative_context_path(path, repo_root)
+    relative_path_text = _normalize_context_path_text(relative_path)
+    file_name = path.name
+    file_suffix = path.suffix.lower()
+
+    if any(part in EXCLUDED_DIRECTORY_NAMES for part in relative_path.parts):
+        return True
+
+    if file_name in EXCLUDED_FILE_NAMES:
+        return True
+
+    if any(fnmatch.fnmatch(file_name, pattern) for pattern in EXCLUDED_FILE_PATTERNS):
+        return True
+
+    if relative_path_text in GENERATED_DIRECTORY_PATHS:
+        return True
+
+    if any(
+        relative_path_text.startswith(f"{generated_path}/")
+        for generated_path in GENERATED_DIRECTORY_PATHS
+    ):
+        return True
+
+    if file_suffix in GENERATED_FILE_SUFFIXES:
+        return True
+
+    if file_suffix in LARGE_BINARY_FILE_SUFFIXES:
+        return True
+
+    return False
+
+
+def _relative_context_path(path: Path, repo_root: Path) -> Path:
+    try:
+        return path.relative_to(repo_root)
+    except ValueError:
+        return path
+
+
+def _normalize_context_path_text(path: Path) -> str:
+    return path.as_posix().strip("/")
+
+
 def _collect_project_files(repo_path: Path) -> tuple[str, ...]:
     project_files: list[str] = []
 
     for file_name in SAFE_PROJECT_FILE_NAMES:
-        if (repo_path / file_name).is_file():
+        candidate_path = repo_path / file_name
+
+        if _should_exclude_context_path(candidate_path, repo_path):
+            continue
+
+        if candidate_path.is_file():  #  Changed Code
             project_files.append(file_name)
 
     for directory_name in SAFE_PROJECT_DIRECTORY_NAMES:
-        if (repo_path / directory_name).is_dir():
+        candidate_path = repo_path / directory_name
+
+        if _should_exclude_context_path(candidate_path, repo_path):
+            continue
+
+        if candidate_path.is_dir():  #  Changed Code
             project_files.append(f"{directory_name}/")
 
     return tuple(project_files)
