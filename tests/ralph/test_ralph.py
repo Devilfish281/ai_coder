@@ -73,6 +73,37 @@ def _patch_successful_worktree_create(monkeypatch, tmp_path) -> None:
     )
 
 
+def _patch_successful_worktree_cleanup(monkeypatch, tmp_path) -> None:
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        if completed:
+            return WorktreeCleanupResult(
+                worktree_path=worktree_path,
+                removed=True,
+                preserved=False,
+                reason="removed_clean_worktree",
+                message=f"Removed clean worktree: {worktree_path}",
+            )
+
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. RALPH did not complete.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+
 def test_ralph_stops_before_worktree_creation_when_repository_is_blocked(
     monkeypatch,
     tmp_path,
@@ -392,6 +423,8 @@ def test_ralph_includes_repository_context_when_prompt_requests_it(
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+
     discovered_repo_paths: list[object] = []
 
     def fake_repository_context_discover(repo_path):
@@ -456,6 +489,8 @@ def test_ralph_default_prompt_includes_repository_context(
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+
     discovered_repo_paths: list[object] = []
 
     def fake_repository_context_discover(repo_path):
@@ -514,6 +549,7 @@ def test_ralph_selects_issue_builds_prompt_and_completes(
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
 
     issues = [
         GitHubIssue(
@@ -549,6 +585,7 @@ def test_ralph_returns_incomplete_status_when_orchestrator_does_not_complete(
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
 
     issues = [
         GitHubIssue(
@@ -598,6 +635,7 @@ def test_ralph_resolves_prompt_file_before_preprocessing(
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
 
     prompt_file = tmp_path / "ralph_prompt.txt"
     prompt_file.write_text(
@@ -648,6 +686,7 @@ def test_ralph_creates_test_issue_when_no_issues_and_testing_flag(
     ralph_module.logger = ralph_module.setup_config.get_logger()
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
 
     provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
 
@@ -689,6 +728,7 @@ def test_ralph_loads_local_issue_file_when_no_issue_is_provided(
     ralph_module.logger = ralph_module.setup_config.get_logger()
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
 
     provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
 
