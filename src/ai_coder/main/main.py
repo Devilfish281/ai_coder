@@ -6,7 +6,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_coder.github_issues import GitHubIssue
+from ai_coder.github_issues import (
+    GitHubIssue,
+    ProvidedIssueData,
+    i_github_issue_from_provided,
+)
+
+
 from ai_coder.ralph import i_ralph_run
 
 from ai_coder.setup_config import c_setup_config
@@ -119,7 +125,7 @@ def main(
 
     cli_overrides = _cli_overrides_from_args(args)
 
-    cli_error = _validate_cli_overrides_before_apply(cli_overrides)  #  Changed Code
+    cli_error = _validate_cli_overrides_before_apply(cli_overrides)
     if cli_error is not None:
         _write_error(cli_error, use_logger=use_logger_t)
         return 1
@@ -387,9 +393,11 @@ def _format_message(
 
 
 def _build_fake_issue_from_config() -> GitHubIssue:
-    return GitHubIssue(
+    provided_issue = ProvidedIssueData(
         number=setup_config.issue_number,
         title=setup_config.issue_title,
         body=setup_config.issue_body,
         labels=(setup_config.label,),
     )
+
+    return i_github_issue_from_provided(provided_issue)  #  Changed Code

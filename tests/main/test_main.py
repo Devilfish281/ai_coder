@@ -115,6 +115,34 @@ def test_main_accepts_custom_fake_issue(capsys, monkeypatch, tmp_path) -> None:
     assert "RALPH completed the selected issue." in captured.out
 
 
+def test_main_custom_issue_text_stays_inert(capsys, monkeypatch, tmp_path) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+
+    _clear_main_test_env(monkeypatch)
+    monkeypatch.setenv("TESTING_FLAG", "true")
+    _refresh_main_config()
+
+    exit_code = main_module.main(
+        [
+            "--issue-number",
+            "14",
+            "--issue-title",
+            "Fix !`echo title`",
+            "--issue-body",
+            "Body !`echo unsafe` {{ISSUE_TITLE}}",
+            "--label",
+            "bug",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Selected issue #14: Fix !`echo title`" in captured.out
+    assert "Body !`echo unsafe` {{ISSUE_TITLE}}" in captured.out
+    assert "RALPH completed the selected issue." in captured.out
+
+
 def test_main_rejects_invalid_max_iterations(capsys, monkeypatch) -> None:
     _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
