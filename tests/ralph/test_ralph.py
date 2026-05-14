@@ -1,12 +1,19 @@
 # tests/ralph/test_ralph.py
-from ai_coder.agent_provider import MockAgentProvider
+from ai_coder.agent_provider import COMPLETE_TOKEN, MockAgentProvider
+
 from ai_coder.github_issues import GitHubIssue
 from ai_coder.repository_context import (
     RepositoryContextResult,
     RepositoryStartResult,
 )
 
-from ai_coder.sandbox_provider import LocalSandboxProvider, SandboxStartResult
+from ai_coder.sandbox_provider import (
+    CommandResult,
+    LocalSandboxProvider,
+    SandboxStartResult,
+)
+
+
 from ai_coder.ralph import i_ralph_run
 from ai_coder.test_runner import TestRunResult
 from ai_coder.worktree_manager import WorktreeCleanupResult, WorktreeCreateResult
@@ -19,6 +26,21 @@ def _refresh_ralph_config() -> None:
     c_setup_config._instance = None
     ralph_module.setup_config = c_setup_config.get_instance()
     ralph_module.logger = ralph_module.setup_config.get_logger()
+
+
+class FakeRalphAgentSandboxHandle:
+    def __init__(self, worktree_path, command_result: CommandResult) -> None:
+        self.worktree_path = worktree_path
+        self.working_directory = worktree_path
+        self.command_result = command_result
+        self.commands: list[list[str]] = []
+
+    def i_sandboxhandle_run(self, command: list[str], cwd=None) -> CommandResult:
+        self.commands.append(command)
+        return self.command_result
+
+    def i_sandboxhandle_close(self) -> None:
+        return None
 
 
 def _patch_clean_repository_context(monkeypatch, tmp_path) -> None:
@@ -206,6 +228,180 @@ def test_ralph_passes_sandbox_handle_to_test_runner(
     assert result.completed is True
     assert result.status == "complete"
     assert received_test_runner_handles == [fake_sandbox_handle]
+
+
+def test_ralph_default_agent_provider_runs_through_sandbox_seam(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    fake_sandbox_handle = FakeRalphAgentSandboxHandle(
+        worktree_path=worktree_path,
+        command_result=CommandResult(
+            stdout="Fake test agent completed.\n<promise>COMPLETE</promise>\n",
+            stderr="",
+            exit_code=0,
+        ),
+    )
+
+    def fake_sandbox_start(working_directory):
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started local sandbox provider.",
+            handle=fake_sandbox_handle,
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=20,
+                title="Add fake test agent provider",
+                body="RALPH should use the sandbox-backed fake provider by default.",
+                labels=("tracer bullet",),
+            )
+        ],
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert result.orchestrator_result is not None
+    assert result.orchestrator_result.iterations == 1
+    assert result.orchestrator_result.error is None
+    assert COMPLETE_TOKEN in result.orchestrator_result.final_output
+    assert len(fake_sandbox_handle.commands) == 1
+    assert COMPLETE_TOKEN in " ".join(fake_sandbox_handle.commands[0])
+
+
+def test_ralph_returns_failed_when_default_fake_test_agent_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    cleanup_calls: list[dict[str, object]] = []
+    fake_sandbox_handle = FakeRalphAgentSandboxHandle(
+        worktree_path=worktree_path,
+        command_result=CommandResult(
+            stdout="",
+            stderr="fake failure",
+            exit_code=7,
+        ),
+    )
+
+    def fake_sandbox_start(working_directory):
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started local sandbox provider.",
+            handle=fake_sandbox_handle,
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. RALPH did not complete.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=20,
+                title="Add fake test agent provider",
+                body="RALPH should report fake agent command failure.",
+                labels=("tracer bullet",),
+            )
+        ],
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is False
+    assert result.status == "failed"
+    assert result.orchestrator_result is not None
+    assert result.orchestrator_result.error == "fake failure"
+    assert "fake failure" in result.message
+    assert "Preserved worktree:" in result.message
+    assert len(fake_sandbox_handle.commands) == 1
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": False,
+            "has_uncommitted_changes": None,
+        }
+    ]
 
 
 def test_ralph_blocks_when_sandbox_startup_fails(
