@@ -106,6 +106,46 @@ def _patch_successful_worktree_cleanup(monkeypatch, tmp_path) -> None:
     )
 
 
+def test_ralph_resolves_prompt_file_before_preprocessing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+
+    prompt_file = tmp_path / "ralph_prompt.txt"
+    prompt_file.write_text(
+        "Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}\n"
+        "Body: {{ISSUE_BODY}}\n"
+        "Done token: {{COMPLETE_TOKEN}}",
+        encoding="utf-8",
+    )
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        [
+            GitHubIssue(
+                number=9,
+                title="Use prompt resolver",
+                body="Load the raw template before preprocessing.",
+                labels=("tracer bullet",),
+            )
+        ],
+        prompt_template="",
+        prompt_path=prompt_file,
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert "Issue #9: Use prompt resolver" in result.prompt
+    assert "Body: Load the raw template before preprocessing." in result.prompt
+    assert "Done token: <promise>COMPLETE</promise>" in result.prompt
+    assert provider.prompts == [result.prompt]
+
+
 def test_ralph_passes_sandbox_handle_to_test_runner(
     monkeypatch,
     tmp_path,
