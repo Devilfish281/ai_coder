@@ -677,6 +677,141 @@ def test_ralph_uses_created_worktree_path_for_sandbox_startup(
     assert provider.run_count == 1
 
 
+def test_ralph_includes_sandbox_aware_prompt_placeholders_after_sandbox_start(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "issue-18-worktree"
+    worktree_path.mkdir(parents=True, exist_ok=True)
+    branch_name = "ralph-issue-18-add-sandbox-aware-prompt-preprocessing"
+    sandbox_start_paths: list[object] = []
+    discovered_repo_paths: list[object] = []
+
+    def fake_worktree_create(
+        repo_path,
+        issue_number,
+        issue_title,
+        worktree_root=None,
+    ):
+        return WorktreeCreateResult(
+            repo_path=tmp_path,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            command=(
+                "git",
+                "-C",
+                str(tmp_path),
+                "worktree",
+                "add",
+                "-b",
+                branch_name,
+                str(worktree_path),
+            ),
+            created=True,
+            message="Created Git worktree: test worktree.",
+        )
+
+    def fake_sandbox_start(working_directory):
+        sandbox_start_paths.append(working_directory)
+        return SandboxStartResult(
+            working_directory=worktree_path,
+            provider_name="local",
+            started=True,
+            message="Started test local sandbox.",
+            handle=LocalSandboxProvider(worktree_path),
+        )
+
+    def fake_repository_context_discover(repo_path):
+        discovered_repo_paths.append(repo_path)
+        return RepositoryContextResult(
+            repo_path=tmp_path,
+            package_manager="poetry",
+            test_command="poetry run pytest",
+            test_command_source="configured",
+            project_files=("pyproject.toml", "poetry.lock", "src/", "tests/"),
+            useful_signals=("Python project", "Uses Poetry", "Uses pytest"),
+            prompt_summary=(
+                "Repository context:\n"
+                "- Package manager: poetry\n"
+                "- Test command: poetry run pytest"
+            ),
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=True,
+            preserved=False,
+            reason="removed_clean_worktree",
+            message=f"Removed clean worktree: {worktree_path}",
+        )
+
+    monkeypatch.setattr(ralph_module, "i_worktree_create", fake_worktree_create)
+    monkeypatch.setattr(ralph_module, "i_sandbox_start", fake_sandbox_start)
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fake_repository_context_discover,
+    )
+    monkeypatch.setattr(ralph_module, "i_test_runner_run", fake_test_runner_run)
+    monkeypatch.setattr(ralph_module, "i_worktree_cleanup", fake_worktree_cleanup)
+
+    prompt_template = (
+        "Issue: {{ISSUE_NUMBER}}\n"
+        "Title: {{ISSUE_TITLE}}\n"
+        "Body: {{ISSUE_BODY}}\n"
+        "Labels: {{ISSUE_LABELS}}\n"
+        "Branch: {{BRANCH_NAME}}\n"
+        "Worktree: {{WORKTREE_PATH}}\n"
+        "Done: {{COMPLETE_TOKEN}}"
+    )
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=18,
+                title="Add sandbox-aware prompt preprocessing",
+                body="Preprocess after sandbox and worktree context exist.",
+                labels=("tracer bullet", "Sandcastle"),
+            )
+        ],
+        prompt_template=prompt_template,
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert "Issue: 18" in result.prompt
+    assert "Title: Add sandbox-aware prompt preprocessing" in result.prompt
+    assert "Body: Preprocess after sandbox and worktree context exist." in result.prompt
+    assert "Labels: tracer bullet, Sandcastle" in result.prompt
+    assert f"Branch: {branch_name}" in result.prompt
+    assert f"Worktree: {worktree_path}" in result.prompt
+    assert "Done: <promise>COMPLETE</promise>" in result.prompt
+    assert provider.prompts == [result.prompt]
+    assert sandbox_start_paths == [worktree_path]
+    assert discovered_repo_paths == [tmp_path]
+
+
 def test_ralph_includes_repository_context_when_prompt_requests_it(
     monkeypatch,
     tmp_path,
@@ -1211,3 +1346,87 @@ def test_ralph_dirty_worktree_preservation_is_reported(
             "has_uncommitted_changes": None,
         }
     ]
+
+
+# 019 tests
+def test_ralph_treats_untrusted_issue_fields_as_inert_prompt_text(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+
+    sentinel_file = tmp_path / "ralph_prompt_should_not_create_this.txt"
+
+    issue_title = (
+        'Fix literal !`echo title` $(Write-Output "title") ' "&& echo title | whoami"
+    )
+    issue_body = (
+        f"Keep this literal: !`echo created > {sentinel_file}` "
+        r"and Windows text C:\Temp\RALPH & Test | whoami %USERNAME% ^."
+    )
+    issue_labels = (
+        "tracer bullet",
+        "label:needs-review",
+        r"windows path C:\Temp\A&B",
+        "pipe | label",
+        'quote "label"',
+        "percent %PATH%",
+        "caret ^",
+    )
+    formatted_labels = ", ".join(issue_labels)
+
+    prompt_template = (
+        "Number: {{ISSUE_NUMBER}}\n"
+        "Title: {{ISSUE_TITLE}}\n"
+        "Body: {{ISSUE_BODY}}\n"
+        "Labels: {{ISSUE_LABELS}}\n"
+        "Branch: {{BRANCH_NAME}}\n"
+        "Worktree: {{WORKTREE_PATH}}\n"
+        "Done token: {{COMPLETE_TOKEN}}"
+    )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=19,
+                title=issue_title,
+                body=issue_body,
+                labels=issue_labels,
+            )
+        ],
+        prompt_template=prompt_template,
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert result.prompt
+    assert issue_title in result.prompt
+    assert issue_body in result.prompt
+    assert f"Labels: {formatted_labels}" in result.prompt
+    assert "Branch: ralph-issue-19-test-worktree" in result.prompt
+    assert f"Worktree: {tmp_path / 'worktree'}" in result.prompt
+    assert "Done token: <promise>COMPLETE</promise>" in result.prompt
+    assert provider.prompts == [result.prompt]
+    assert sentinel_file.exists() is False
