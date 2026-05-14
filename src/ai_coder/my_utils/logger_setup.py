@@ -394,9 +394,11 @@ class AsyncRotatingFileHandler(RotatingFileHandler):
                     self.stream = self._open()
 
                 for record in buffer:
-                    # rotation check (this is what you were missing)
                     if self.shouldRollover(record):
-                        self.doRollover()
+                        self._safe_do_rollover()  #  Added Code
+
+                    if self.stream is None:  #  Added Code
+                        self.stream = self._open()  #  Added Code
 
                     msg = self.format(record)
                     self.stream.write(msg + "\n")
@@ -404,9 +406,21 @@ class AsyncRotatingFileHandler(RotatingFileHandler):
                 self.flush()
 
         except Exception:
-            # handleError expects a LogRecord
             for record in buffer:
                 self.handleError(record)
+
+    def _safe_do_rollover(self) -> None:
+        try:
+            self.doRollover()
+        except PermissionError as error:
+            self._debug(f"Skipped log rollover because the log file is locked: {error}")
+
+            if self.stream is None:
+                try:
+                    self.stream = self._open()
+                except Exception:
+                    self.stream = None
+                    raise
 
     def close(self):
         """

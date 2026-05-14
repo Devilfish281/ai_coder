@@ -41,9 +41,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
-from ai_coder.agent_provider import AgentProvider, COMPLETE_TOKEN, MockAgentProvider
+from typing import Any, Iterable
+
+from ai_coder.agent_provider import (
+    AgentProvider,
+    COMPLETE_TOKEN,
+    FakeTestAgentProvider,
+    MockAgentProvider,
+)
+
 from ai_coder.completion_detector import i_completion_detector_detect
 from ai_coder.github_issues import (
     GitHubIssue,
@@ -254,7 +261,10 @@ def i_ralph_run(
 
     logger.info(f"Final prompt after preprocessing:\n{prompt}")
 
-    selected_agent_provider = agent_provider or MockAgentProvider()
+    selected_agent_provider = _build_default_agent_provider(
+        agent_provider=agent_provider,
+        sandbox_handle=sandbox_result.handle,
+    )
 
     logger.info(f"Using agent provider: {selected_agent_provider.__class__.__name__}")
 
@@ -330,15 +340,17 @@ def i_ralph_run(
     logger.info(cleanup_result.reason)
     logger.info(cleanup_result.message)
 
-    workflow_message = (
-        "RALPH completed the selected issue."
-        if orchestrator_result.completed
-        else "RALPH stopped before completion."
-    )
-    message_result = f"{workflow_message}\n{cleanup_result.message}"
+    result_status = _status_from_orchestrator_result(orchestrator_result)
+    workflow_message = _workflow_message_for_status(result_status)
+    message_parts = [workflow_message]
+
+    if orchestrator_result.error:
+        message_parts.append(orchestrator_result.error)
+
+    message_parts.append(cleanup_result.message)
+    message_result = "\n".join(message_parts)
 
     logger.info(f"Selected issue: #{selected_issue.number} - {selected_issue.title}")
-    # logger.info(f"Prompt given to agent:\n{prompt}")
     logger.info(f"Orchestrator result: {orchestrator_result}")
     logger.info(f"Completion detected: {completion_result.completed}")
     logger.info(f"Message: {message_result}")
@@ -349,8 +361,56 @@ def i_ralph_run(
         orchestrator_result=orchestrator_result,
         completed=orchestrator_result.completed,
         message=message_result,
-        status=("complete" if orchestrator_result.completed else "incomplete"),
+        status=result_status,
     )
+
+
+def _build_default_agent_provider(
+    agent_provider: AgentProvider | None,
+    sandbox_handle: Any,
+) -> AgentProvider:
+    if agent_provider is not None:
+        return agent_provider
+
+    if sandbox_handle is None:
+        raise ValueError("sandbox_handle is required for the default fake test agent.")
+
+    return FakeTestAgentProvider(sandbox_handle)
+
+
+def _status_from_orchestrator_result(
+    orchestrator_result: OrchestratorResult,
+) -> str:
+    if orchestrator_result.completed:
+        return "complete"
+
+    if (
+        orchestrator_result.error
+        and orchestrator_result.error != "Maximum iterations reached before completion."
+    ):
+        return "failed"
+
+    return "incomplete"
+
+
+def _workflow_message_for_status(status: str) -> str:
+    if status == "complete":
+        return "RALPH completed the selected issue."
+
+    if status == "failed":
+        return "RALPH failed before completion."
+
+    return "RALPH stopped before completion."
+
+
+def _workflow_message_for_status(status: str) -> str:
+    if status == "complete":
+        return "RALPH completed the selected issue."
+
+    if status == "failed":
+        return "RALPH failed before completion."
+
+    return "RALPH stopped before completion."
 
 
 def _resolve_issue_source(
