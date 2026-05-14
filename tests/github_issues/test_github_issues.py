@@ -1,4 +1,5 @@
-# src/ai_coder/github_issues/github_issues.py
+# tests\github_issues\test_github_issues.py
+
 from types import SimpleNamespace
 
 import pytest
@@ -409,3 +410,30 @@ def test_github_issue_close_stub_does_not_close_issue() -> None:
     assert result.issue_number == 9
     assert result.closed is False
     assert "stubbed" in result.message
+
+
+# 019 Tests for security and special character handling
+def test_github_issue_from_provided_data_preserves_labels_with_special_characters() -> (
+    None
+):
+    special_labels = (
+        "label:needs-review",
+        r"windows path C:\Temp\A&B",
+        "pipe | label",
+        'quote "label"',
+        "percent %PATH%",
+        "caret ^",
+    )
+
+    provided_issue = ProvidedIssueData(
+        number=21,
+        title="Preserve provided label text",
+        body="RALPH should preserve provided label text exactly.",
+        labels=special_labels,
+    )
+
+    issue = i_github_issue_from_provided(provided_issue)
+
+    assert issue.labels == special_labels
+    assert issue.labels[0] == "label:needs-review"
+    assert issue.labels[-1] == "caret ^"
