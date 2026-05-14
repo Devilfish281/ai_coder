@@ -1,3 +1,4 @@
+# src/ai_coder/prompt_resolver/prompt_resolver.py
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,5 +21,8 @@ def i_prompt_resolve(
 
     if not resolved_path.exists():
         raise FileNotFoundError(f"Prompt file does not exist: {resolved_path}")
+
+    if not resolved_path.is_file():
+        raise ValueError(f"Prompt path must be a file: {resolved_path}")
 
     return resolved_path.read_text(encoding="utf-8")

@@ -416,6 +416,9 @@ def _build_master_prompt_template(
 
     file_prompt = i_prompt_resolve(prompt_path=prompt_path)
 
+    if not base_prompt.strip():
+        return file_prompt
+
     return (
         f"{base_prompt.rstrip()}\n\n"
         "###############################################################################\n"
@@ -423,6 +426,45 @@ def _build_master_prompt_template(
         "###############################################################################\n\n"
         f"{file_prompt.strip()}\n"
     )
+
+
+def _resolve_prompt_text(
+    prompt_template: str,
+    prompt_path: str | Path | None,
+) -> str:
+    logger.info("Step 6a: Resolve prompt text from file or inline prompt.")
+    return _build_master_prompt_template(
+        prompt_template=prompt_template,
+        prompt_path=prompt_path,
+    )
+
+
+def _preprocess_prompt_after_sandbox_ready(
+    raw_prompt_template: str,
+    selected_issue: GitHubIssue,
+    repository_context_summary: str = "",
+) -> str:
+    logger.info("Step 6b: Preprocess prompt after sandbox is ready.")
+    return i_prompt_preprocess(
+        raw_prompt_template,
+        _build_prompt_replacements(
+            selected_issue,
+            repository_context_summary,
+        ),
+    )
+
+
+def _build_prompt_replacements(
+    selected_issue: GitHubIssue,
+    repository_context_summary: str = "",
+) -> dict[str, object]:
+    return {
+        "ISSUE_NUMBER": selected_issue.number,
+        "ISSUE_TITLE": selected_issue.title,
+        "ISSUE_BODY": selected_issue.body,
+        "REPOSITORY_CONTEXT": repository_context_summary,
+        "COMPLETE_TOKEN": COMPLETE_TOKEN,
+    }
 
 
 def _resolve_prompt_text(
