@@ -98,6 +98,15 @@ class CommandResult:
 
         return self.exit_code == 0
 
+    @property
+    def failed(self) -> bool:
+        """Return ``True`` when the command exit code is not ``0``.
+
+        :return: ``True`` if the command failed, otherwise ``False``.
+        """
+
+        return not self.succeeded
+
 
 @dataclass(frozen=True)
 class MountConfig:
@@ -156,23 +165,8 @@ class SandboxHandle(Protocol):
         :param cwd: Optional working directory.
         :return: Captured command result.
         """
-        # env_args = self._build_env_args()
-        # secret_env_args = self._build_secret_env_args()
 
-        # docker_command = [
-        #     "docker",
-        #     "run",
-        #     "--rm",
-        #     *env_args,
-        #     *secret_env_args,
-        #     *volume_args,
-        #     "-w",
-        #     sandbox_cwd,
-        #     self.image_name,
-        #     *command,
-        # ]
-
-        ...
+        raise NotImplementedError
 
     def i_sandboxhandle_close(self) -> None:
         """Close or clean up the sandbox handle.
@@ -181,7 +175,7 @@ class SandboxHandle(Protocol):
         method keeps the interface ready for a future long-running container.
         """
 
-        ...
+        raise NotImplementedError
 
 
 class BindMountSandboxProvider(Protocol):
@@ -256,13 +250,18 @@ class LocalSandboxProvider:
             command,
         )
 
-        completed_process = subprocess.run(
-            command,
-            cwd=run_cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            completed_process = subprocess.run(
+                command,
+                cwd=run_cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as error:
+            result = _command_result_from_os_error(error)
+            _log_command_result("local", command, result)
+            return result
 
         result = _command_result_from_completed_process(completed_process)
         _log_command_result("local", command, result)
@@ -372,13 +371,17 @@ class DockerSandboxProvider:
             redacted_docker_command,
         )
 
-        # TODO: Later stream Docker output live instead of only capturing it after completion.
-        completed_process = subprocess.run(
-            docker_command,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:  #  Added Code
+            completed_process = subprocess.run(
+                docker_command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as error:  #  Added Code
+            result = _command_result_from_os_error(error)  #  Added Code
+            _log_command_result("docker", command, result)  #  Added Code
+            return result  #  Added Code
 
         result = _command_result_from_completed_process(completed_process)
         _log_command_result("docker", command, result)
@@ -823,6 +826,20 @@ def _command_result_from_completed_process(
         stdout=completed_process.stdout or "",
         stderr=completed_process.stderr or "",
         exit_code=completed_process.returncode,
+    )
+
+
+def _command_result_from_os_error(error: OSError) -> CommandResult:
+    """Convert a command startup error into ``CommandResult``.
+
+    :param error: Operating-system error raised before the command completed.
+    :return: Project command result with a normalized failure shape.
+    """
+
+    return CommandResult(
+        stdout="",
+        stderr=str(error),
+        exit_code=1,
     )
 
 

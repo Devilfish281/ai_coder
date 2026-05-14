@@ -42,19 +42,20 @@ def test_test_runner_uses_sandbox_handle_when_provided() -> None:
 
 
 def test_test_runner_returns_failed_result_when_sandbox_command_fails() -> None:
-    sandbox = FakeSandboxHandle(
-        CommandResult(
-            stdout="",
-            stderr="pytest failed",
-            exit_code=1,
-        )
+    command_result = CommandResult(
+        stdout="",
+        stderr="pytest failed",
+        exit_code=1,
     )
+    sandbox = FakeSandboxHandle(command_result)  #  Changed Code
 
     result = i_test_runner_run(
         sandbox_handle=sandbox,
         command=("pytest",),
     )
 
+    assert command_result.succeeded is False
+    assert command_result.failed is True
     assert result.passed is False
     assert result.command == ("pytest",)
     assert result.stdout == ""
