@@ -243,11 +243,15 @@ def i_ralph_run(
     logger.info(
         f"Selected issue for prompt preprocessing: #{selected_issue.number} - {selected_issue.title}"
     )
+
     prompt = _preprocess_prompt_after_sandbox_ready(
         raw_prompt_template=raw_prompt_template,
         selected_issue=selected_issue,
         repository_context_summary=repository_context_result.prompt_summary,
+        branch_name=worktree_result.branch_name,
+        worktree_path=worktree_result.worktree_path,
     )
+
     logger.info(f"Final prompt after preprocessing:\n{prompt}")
 
     selected_agent_provider = agent_provider or MockAgentProvider()
@@ -284,7 +288,7 @@ def i_ralph_run(
 
     # 9. Run tests.
     logger.info("Step 9: Run tests.")
-    test_result = i_test_runner_run(  #  Changed Code
+    test_result = i_test_runner_run(
         sandbox_handle=sandbox_result.handle,
     )
     logger.info(f"Tests passed: {test_result.passed}")
@@ -314,9 +318,7 @@ def i_ralph_run(
     logger.info(close_result.message)
 
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
-    logger.info(
-        "Step 12: Preserve or clean up the worktree based on final run state."
-    )  #  Changed Code
+    logger.info("Step 12: Preserve or clean up the worktree based on final run state.")
     cleanup_result = i_worktree_cleanup(
         repo_path=repository_result.repo_path,
         worktree_path=worktree_result.worktree_path,
@@ -333,7 +335,7 @@ def i_ralph_run(
         if orchestrator_result.completed
         else "RALPH stopped before completion."
     )
-    message_result = f"{workflow_message}\n{cleanup_result.message}"  #  Changed Code
+    message_result = f"{workflow_message}\n{cleanup_result.message}"
 
     logger.info(f"Selected issue: #{selected_issue.number} - {selected_issue.title}")
     # logger.info(f"Prompt given to agent:\n{prompt}")
@@ -443,13 +445,17 @@ def _preprocess_prompt_after_sandbox_ready(
     raw_prompt_template: str,
     selected_issue: GitHubIssue,
     repository_context_summary: str = "",
+    branch_name: str = "",
+    worktree_path: str | Path | None = None,
 ) -> str:
     logger.info("Step 6b: Preprocess prompt after sandbox is ready.")
     return i_prompt_preprocess(
         raw_prompt_template,
         _build_prompt_replacements(
-            selected_issue,
-            repository_context_summary,
+            selected_issue=selected_issue,
+            repository_context_summary=repository_context_summary,
+            branch_name=branch_name,
+            worktree_path=worktree_path,
         ),
     )
 
@@ -457,50 +463,20 @@ def _preprocess_prompt_after_sandbox_ready(
 def _build_prompt_replacements(
     selected_issue: GitHubIssue,
     repository_context_summary: str = "",
+    branch_name: str = "",
+    worktree_path: str | Path | None = None,
 ) -> dict[str, object]:
     return {
         "ISSUE_NUMBER": selected_issue.number,
         "ISSUE_TITLE": selected_issue.title,
         "ISSUE_BODY": selected_issue.body,
+        "ISSUE_LABELS": _format_issue_labels(selected_issue.labels),
+        "BRANCH_NAME": branch_name,
+        "WORKTREE_PATH": "" if worktree_path is None else str(worktree_path),
         "REPOSITORY_CONTEXT": repository_context_summary,
         "COMPLETE_TOKEN": COMPLETE_TOKEN,
     }
 
 
-def _resolve_prompt_text(
-    prompt_template: str,
-    prompt_path: str | Path | None,
-) -> str:
-    logger.info("Step 6a: Resolve prompt text from file or inline prompt.")
-    return _build_master_prompt_template(
-        prompt_template=prompt_template,
-        prompt_path=prompt_path,
-    )
-
-
-def _preprocess_prompt_after_sandbox_ready(
-    raw_prompt_template: str,
-    selected_issue: GitHubIssue,
-    repository_context_summary: str = "",
-) -> str:
-    logger.info("Step 6b: Preprocess prompt after sandbox is ready.")
-    return i_prompt_preprocess(
-        raw_prompt_template,
-        _build_prompt_replacements(
-            selected_issue,
-            repository_context_summary,
-        ),
-    )
-
-
-def _build_prompt_replacements(
-    selected_issue: GitHubIssue,
-    repository_context_summary: str = "",
-) -> dict[str, object]:
-    return {
-        "ISSUE_NUMBER": selected_issue.number,
-        "ISSUE_TITLE": selected_issue.title,
-        "ISSUE_BODY": selected_issue.body,
-        "REPOSITORY_CONTEXT": repository_context_summary,
-        "COMPLETE_TOKEN": COMPLETE_TOKEN,
-    }
+def _format_issue_labels(labels: tuple[str, ...]) -> str:
+    return ", ".join(labels)
