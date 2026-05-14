@@ -43,7 +43,7 @@ def i_test_runner_run(  #  Changed Code
         list(resolved_command),
     )
 
-    tests_passed = command_result.exit_code == 0
+    tests_passed = command_result.succeeded
     message = (
         "Tests passed through the sandbox seam."
         if tests_passed
