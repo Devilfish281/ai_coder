@@ -1,5 +1,7 @@
 # tests/ralph/test_ralph.py
 from ai_coder.agent_provider import COMPLETE_TOKEN, MockAgentProvider
+from ai_coder.sync_out import SyncMergeResult
+
 
 from ai_coder.github_issues import GitHubIssue
 from ai_coder.repository_context import (
@@ -15,6 +17,18 @@ from ai_coder.sandbox_provider import (
 
 
 from ai_coder.ralph import i_ralph_run
+
+
+from ai_coder.ralph import (
+    RALPH_RESULT_STATUSES,
+    RALPH_STATUS_BLOCKED,
+    RALPH_STATUS_COMPLETE,
+    RALPH_STATUS_FAILED,
+    RALPH_STATUS_INCOMPLETE,
+    RALPH_STATUS_NO_CHANGES,
+)
+
+
 from ai_coder.test_runner import TestRunResult
 from ai_coder.worktree_manager import WorktreeCleanupResult, WorktreeCreateResult
 
@@ -26,6 +40,21 @@ def _refresh_ralph_config() -> None:
     c_setup_config._instance = None
     ralph_module.setup_config = c_setup_config.get_instance()
     ralph_module.logger = ralph_module.setup_config.get_logger()
+
+
+def test_ralph_result_status_contract_lists_all_supported_statuses() -> None:
+    assert RALPH_STATUS_COMPLETE == "complete"
+    assert RALPH_STATUS_INCOMPLETE == "incomplete"
+    assert RALPH_STATUS_FAILED == "failed"
+    assert RALPH_STATUS_BLOCKED == "blocked"
+    assert RALPH_STATUS_NO_CHANGES == "no_changes"
+    assert RALPH_RESULT_STATUSES == (
+        "complete",
+        "incomplete",
+        "failed",
+        "blocked",
+        "no_changes",
+    )
 
 
 class FakeRalphAgentSandboxHandle:
@@ -128,44 +157,88 @@ def _patch_successful_worktree_cleanup(monkeypatch, tmp_path) -> None:
     )
 
 
-def test_ralph_resolves_prompt_file_before_preprocessing(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    _patch_clean_repository_context(monkeypatch, tmp_path)
-    _patch_successful_worktree_create(monkeypatch, tmp_path)
-    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+def _patch_successful_sync_merge(monkeypatch) -> None:
+    def fake_sync_out_merge(completed: bool):
+        return SyncMergeResult(
+            merged=completed,
+            failed=False,
+            message="Sync or commit succeeded.",
+        )
 
-    prompt_file = tmp_path / "ralph_prompt.txt"
-    prompt_file.write_text(
-        "Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}\n"
-        "Body: {{ISSUE_BODY}}\n"
-        "Done token: {{COMPLETE_TOKEN}}",
-        encoding="utf-8",
-    )
-    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
-
-    result = i_ralph_run(
-        [
-            GitHubIssue(
-                number=9,
-                title="Use prompt resolver",
-                body="Load the raw template before preprocessing.",
-                labels=("tracer bullet",),
-            )
-        ],
-        prompt_template="",
-        prompt_path=prompt_file,
-        agent_provider=provider,
-        repo_path=tmp_path,
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
     )
 
-    assert result.completed is True
-    assert result.status == "complete"
-    assert "Issue #9: Use prompt resolver" in result.prompt
-    assert "Body: Load the raw template before preprocessing." in result.prompt
-    assert "Done token: <promise>COMPLETE</promise>" in result.prompt
-    assert provider.prompts == [result.prompt]
+
+def _patch_passing_test_runner(monkeypatch) -> None:
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+
+def _patch_failing_test_runner(monkeypatch) -> None:
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=False,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests failed through the sandbox seam.",
+            stdout="",
+            stderr="pytest failed",
+            exit_code=1,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+
+def _patch_stubbed_no_change_sync_merge(monkeypatch) -> None:
+    def fake_sync_out_merge(completed: bool):
+        return SyncMergeResult(
+            merged=False,
+            failed=False,
+            message="Sync or merge is stubbed in this tracer-bullet slice.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+
+
+def _patch_failed_sync_merge(monkeypatch) -> None:
+    def fake_sync_out_merge(completed: bool):
+        return SyncMergeResult(
+            merged=False,
+            failed=True,
+            message="Sync or commit failed.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
 
 
 def test_ralph_passes_sandbox_handle_to_test_runner(
@@ -175,6 +248,7 @@ def test_ralph_passes_sandbox_handle_to_test_runner(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
 
     fake_sandbox_handle = LocalSandboxProvider(tmp_path / "worktree")
     received_test_runner_handles: list[object] = []
@@ -237,6 +311,7 @@ def test_ralph_default_agent_provider_runs_through_sandbox_seam(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
 
     worktree_path = tmp_path / "worktree"
     fake_sandbox_handle = FakeRalphAgentSandboxHandle(
@@ -402,6 +477,129 @@ def test_ralph_returns_failed_when_default_fake_test_agent_fails(
             "has_uncommitted_changes": None,
         }
     ]
+
+
+def test_ralph_returns_failed_when_tests_fail_after_agent_completion(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_failing_test_runner(monkeypatch)
+    _patch_stubbed_no_change_sync_merge(monkeypatch)
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=22,
+                title="Add RALPH result status contract",
+                body="RALPH should report failed when tests fail.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "failed"
+    assert result.completed is False
+    assert "Tests failed" in result.message
+    assert "Preserved worktree:" in result.message
+
+
+def test_ralph_returns_failed_when_sync_or_commit_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_failed_sync_merge(monkeypatch)
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=22,
+                title="Add RALPH result status contract",
+                body="RALPH should report failed when sync or commit fails.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "failed"
+    assert result.completed is False
+    assert "sync" in result.message.lower() or "commit" in result.message.lower()
+    assert "Preserved worktree:" in result.message
+
+
+def test_ralph_returns_no_changes_when_agent_completes_without_detected_changes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_stubbed_no_change_sync_merge(monkeypatch)
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=22,
+                title="Add RALPH result status contract",
+                body="RALPH should report no_changes when no commit or sync is proven.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "no_changes"
+    assert result.completed is False
+    assert "no code changes" in result.message.lower()
+
+
+def test_ralph_can_complete_no_change_issue_when_no_changes_are_allowed(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_stubbed_no_change_sync_merge(monkeypatch)
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=22,
+                title="Add RALPH result status contract",
+                body="RALPH should allow explicitly no-change issues.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        allow_no_changes=True,
+    )
+
+    assert result.status == "complete"
+    assert result.completed is True
+    assert "RALPH completed the selected issue." in result.message
 
 
 def test_ralph_blocks_when_sandbox_startup_fails(
@@ -610,6 +808,8 @@ def test_ralph_creates_worktree_when_repository_is_clean(
     tmp_path,
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     worktree_calls: list[dict[str, object]] = []
     worktree_path = tmp_path / "worktree"
@@ -766,6 +966,7 @@ def test_ralph_uses_created_worktree_path_for_sandbox_startup(
     tmp_path,
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
 
     worktree_path = tmp_path / "created-worktree"
     sandbox_start_paths: list[object] = []
@@ -878,6 +1079,7 @@ def test_ralph_includes_sandbox_aware_prompt_placeholders_after_sandbox_start(
     tmp_path,
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
 
     worktree_path = tmp_path / "issue-18-worktree"
     worktree_path.mkdir(parents=True, exist_ok=True)
@@ -1015,6 +1217,8 @@ def test_ralph_includes_repository_context_when_prompt_requests_it(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     discovered_repo_paths: list[object] = []
 
@@ -1081,6 +1285,8 @@ def test_ralph_default_prompt_includes_repository_context(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     discovered_repo_paths: list[object] = []
 
@@ -1141,6 +1347,8 @@ def test_ralph_selects_issue_builds_prompt_and_completes(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     issues = [
         GitHubIssue(
@@ -1198,7 +1406,7 @@ def test_ralph_returns_incomplete_status_when_orchestrator_does_not_complete(
     assert result.selected_issue.number == 10
     assert result.orchestrator_result is not None
     assert result.completed is False
-    assert result.status == "incomplete"
+    assert result.status == "incomplete"  #  Changed Code
     assert "RALPH stopped before completion." in result.message
     assert "Preserved worktree:" in result.message
     assert str(tmp_path / "worktree") in result.message
@@ -1216,7 +1424,7 @@ def test_ralph_returns_clear_result_when_no_issue_is_selected(
     assert result.prompt == ""
     assert result.orchestrator_result is None
     assert result.completed is False
-    assert result.status == "incomplete"
+    assert result.status == "blocked"  #  Changed Code
     assert result.message == "No open actionable issue selected."
 
 
@@ -1227,6 +1435,8 @@ def test_ralph_resolves_prompt_file_before_preprocessing(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     prompt_file = tmp_path / "ralph_prompt.txt"
     prompt_file.write_text(
@@ -1246,8 +1456,10 @@ def test_ralph_resolves_prompt_file_before_preprocessing(
                 labels=("tracer bullet",),
             )
         ],
-        agent_provider=provider,
+        prompt_template="",
         prompt_path=prompt_file,
+        agent_provider=provider,
+        repo_path=tmp_path,
     )
 
     assert result.completed is True
@@ -1278,6 +1490,8 @@ def test_ralph_creates_test_issue_when_no_issues_and_testing_flag(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
 
@@ -1320,6 +1534,8 @@ def test_ralph_loads_local_issue_file_when_no_issue_is_provided(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
 
@@ -1346,7 +1562,7 @@ def test_ralph_incomplete_run_preserves_worktree_and_reports_path(
 
     cleanup_calls: list[dict[str, object]] = []
 
-    def fake_worktree_cleanup(  #  Changed Code
+    def fake_worktree_cleanup(
         repo_path,
         worktree_path,
         completed,
@@ -1391,7 +1607,7 @@ def test_ralph_incomplete_run_preserves_worktree_and_reports_path(
     )
 
     assert result.completed is False
-    assert result.status == "incomplete"
+    assert result.status == "incomplete"  #  Changed Code
     assert "RALPH stopped before completion." in result.message
     assert "Preserved worktree:" in result.message
     assert str(worktree_path) in result.message
@@ -1413,6 +1629,8 @@ def test_ralph_successful_clean_run_reports_worktree_cleanup(
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     worktree_path = tmp_path / "worktree"
     cleanup_calls: list[dict[str, object]] = []
@@ -1481,6 +1699,8 @@ def test_ralph_dirty_worktree_preservation_is_reported(
 ) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     worktree_path = tmp_path / "worktree"
     cleanup_calls: list[dict[str, object]] = []
@@ -1552,6 +1772,7 @@ def test_ralph_treats_untrusted_issue_fields_as_inert_prompt_text(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
 
     sentinel_file = tmp_path / "ralph_prompt_should_not_create_this.txt"
 

@@ -20,19 +20,19 @@ class CompletionDetectionResult:
 
 def i_completion_detector_detect(  #  Changed Code
     output_text: str,  #  Changed Code
-    completion_token: str = COMPLETE_TOKEN,  #  Added Code
+    completion_token: str = COMPLETE_TOKEN,
 ) -> CompletionDetectionResult:
     logger.info("Starting completion detection.")
 
     if completion_token in output_text:  #  Changed Code
-        message = f"The completion detector found {completion_token}."  #  Added Code
+        message = f"The completion detector found {completion_token}."
         logger.info(message)  #  Changed Code
         return CompletionDetectionResult(
             completed=True,
             message=message,  #  Changed Code
         )
 
-    message = f"The completion detector did not find {completion_token}."  #  Added Code
+    message = f"The completion detector did not find {completion_token}."
     logger.info(message)  #  Changed Code
     return CompletionDetectionResult(
         completed=False,

@@ -395,10 +395,10 @@ class AsyncRotatingFileHandler(RotatingFileHandler):
 
                 for record in buffer:
                     if self.shouldRollover(record):
-                        self._safe_do_rollover()  #  Added Code
+                        self._safe_do_rollover()
 
-                    if self.stream is None:  #  Added Code
-                        self.stream = self._open()  #  Added Code
+                    if self.stream is None:
+                        self.stream = self._open()
 
                     msg = self.format(record)
                     self.stream.write(msg + "\n")

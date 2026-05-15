@@ -371,17 +371,17 @@ class DockerSandboxProvider:
             redacted_docker_command,
         )
 
-        try:  #  Added Code
+        try:
             completed_process = subprocess.run(
                 docker_command,
                 capture_output=True,
                 text=True,
                 check=False,
             )
-        except OSError as error:  #  Added Code
-            result = _command_result_from_os_error(error)  #  Added Code
-            _log_command_result("docker", command, result)  #  Added Code
-            return result  #  Added Code
+        except OSError as error:
+            result = _command_result_from_os_error(error)
+            _log_command_result("docker", command, result)
+            return result
 
         result = _command_result_from_completed_process(completed_process)
         _log_command_result("docker", command, result)
