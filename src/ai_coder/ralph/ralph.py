@@ -39,6 +39,7 @@ Development workflow:
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -190,7 +191,7 @@ def i_ralph_run(
             orchestrator_result=None,
             completed=False,
             message="No open actionable issue selected.",
-            status=RALPH_STATUS_BLOCKED,  #  Changed Code
+            status=RALPH_STATUS_BLOCKED,
         )
 
     logger.info(f"Selected issue #{selected_issue.number}: {selected_issue.title}")
@@ -316,12 +317,18 @@ def i_ralph_run(
     logger.info(completion_result.message)
 
     # 9. Run tests.
+
     logger.info("Step 9: Run tests.")
+    test_command = _build_test_command_tuple(repository_context_result.test_command)
     test_result = i_test_runner_run(
         sandbox_handle=sandbox_result.handle,
+        command=test_command,
     )
     logger.info(f"Tests passed: {test_result.passed}")
     logger.info(f"Test command: {test_result.command}")
+    logger.info(f"Test exit code: {test_result.exit_code}")
+    logger.info(f"Test stdout: {test_result.stdout}")
+    logger.info(f"Test stderr: {test_result.stderr}")
 
     logger.info(test_result.message)
 
@@ -387,6 +394,7 @@ def i_ralph_run(
 
     if not test_result.passed:
         message_parts.append(test_result.message)
+        message_parts.append(_format_test_result_diagnostics(test_result))
 
     if getattr(sync_result, "failed", False):
         message_parts.append(sync_result.message)
@@ -425,6 +433,30 @@ def _build_default_agent_provider(
     return FakeTestAgentProvider(sandbox_handle)
 
 
+def _build_test_command_tuple(test_command: str) -> tuple[str, ...]:
+    cleaned_test_command = test_command.strip()
+
+    if not cleaned_test_command:
+        return ()
+
+    return tuple(shlex.split(cleaned_test_command))
+
+
+def _format_test_result_diagnostics(test_result: TestRunResult) -> str:
+    command_text = " ".join(test_result.command) if test_result.command else "<missing>"
+    stdout_text = test_result.stdout if test_result.stdout else "<empty>"
+    stderr_text = test_result.stderr if test_result.stderr else "<empty>"
+
+    return (
+        f"Test command: {command_text}\n"
+        f"Test exit code: {test_result.exit_code}\n"
+        "Test stdout:\n"
+        f"{stdout_text}\n"
+        "Test stderr:\n"
+        f"{stderr_text}"
+    )
+
+
 def _status_from_run_results(
     orchestrator_result: OrchestratorResult,
     test_result: TestRunResult,
@@ -442,6 +474,9 @@ def _status_from_run_results(
             return RALPH_STATUS_FAILED
 
         return RALPH_STATUS_INCOMPLETE
+
+    if getattr(test_result, "blocked", False):
+        return RALPH_STATUS_BLOCKED
 
     if not test_result.passed:
         return RALPH_STATUS_FAILED

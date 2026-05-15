@@ -7,8 +7,8 @@ from ai_coder.repository_context import RepositoryStartResult
 from ai_coder.worktree_manager import WorktreeCleanupResult, WorktreeCreateResult
 from ai_coder.setup_config import c_setup_config
 
-from ai_coder.sync_out import SyncMergeResult  #  Added Code
-from ai_coder.test_runner import TestRunResult  #  Added Code
+from ai_coder.sync_out import SyncMergeResult
+from ai_coder.test_runner import TestRunResult
 
 main_module = importlib.import_module("ai_coder.main.main")
 
@@ -129,37 +129,37 @@ def _patch_successful_worktree_cleanup(monkeypatch, tmp_path) -> None:
     )
 
 
-def _patch_passing_test_runner(monkeypatch) -> None:  #  Added Code
-    def fake_test_runner_run(  #  Added Code
-        sandbox_handle=None,  #  Added Code
-        command=None,  #  Added Code
-    ):  #  Added Code
-        return TestRunResult(  #  Added Code
-            passed=True,  #  Added Code
-            command=command or ("poetry", "run", "pytest"),  #  Added Code
-            message="Tests passed through the sandbox seam.",  #  Added Code
-        )  #  Added Code
+def _patch_passing_test_runner(monkeypatch) -> None:
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
 
-    monkeypatch.setattr(  #  Added Code
-        ralph_module,  #  Added Code
-        "i_test_runner_run",  #  Added Code
-        fake_test_runner_run,  #  Added Code
-    )  #  Added Code
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
 
 
-def _patch_successful_sync_merge(monkeypatch) -> None:  #  Added Code
-    def fake_sync_out_merge(completed: bool):  #  Added Code
-        return SyncMergeResult(  #  Added Code
-            merged=completed,  #  Added Code
-            failed=False,  #  Added Code
-            message="Sync or commit succeeded.",  #  Added Code
-        )  #  Added Code
+def _patch_successful_sync_merge(monkeypatch) -> None:
+    def fake_sync_out_merge(completed: bool):
+        return SyncMergeResult(
+            merged=completed,
+            failed=False,
+            message="Sync or commit succeeded.",
+        )
 
-    monkeypatch.setattr(  #  Added Code
-        ralph_module,  #  Added Code
-        "i_sync_out_merge",  #  Added Code
-        fake_sync_out_merge,  #  Added Code
-    )  #  Added Code
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
 
 
 def _prepare_main_cli_test_config(monkeypatch, tmp_path):
@@ -181,8 +181,8 @@ def test_main_runs_default_fake_issue(capsys, monkeypatch, tmp_path) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
-    _patch_passing_test_runner(monkeypatch)  #  Added Code
-    _patch_successful_sync_merge(monkeypatch)  #  Added Code
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
@@ -201,8 +201,8 @@ def test_main_accepts_custom_fake_issue(capsys, monkeypatch, tmp_path) -> None:
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
-    _patch_passing_test_runner(monkeypatch)  #  Added Code
-    _patch_successful_sync_merge(monkeypatch)  #  Added Code
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
@@ -232,8 +232,8 @@ def test_main_custom_issue_text_stays_inert(capsys, monkeypatch, tmp_path) -> No
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
-    _patch_passing_test_runner(monkeypatch)  #  Added Code
-    _patch_successful_sync_merge(monkeypatch)  #  Added Code
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     _clear_main_test_env(monkeypatch)
     monkeypatch.setenv("TESTING_FLAG", "true")
@@ -306,8 +306,8 @@ def test_main_valid_cli_overrides_update_setup_config(
     prompt_file = _prepare_main_cli_test_config(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
-    _patch_passing_test_runner(monkeypatch)  #  Added Code
-    _patch_successful_sync_merge(monkeypatch)  #  Added Code
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     exit_code = main_module.main(
         [
@@ -428,8 +428,8 @@ def test_main_cli_repo_path_override_can_fix_bad_env_repo_path(
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
-    _patch_passing_test_runner(monkeypatch)  #  Added Code
-    _patch_successful_sync_merge(monkeypatch)  #  Added Code
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
 
     _clear_main_test_env(monkeypatch)
 
