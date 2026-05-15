@@ -158,11 +158,28 @@ def _patch_successful_worktree_cleanup(monkeypatch, tmp_path) -> None:
 
 
 def _patch_successful_sync_merge(monkeypatch) -> None:
-    def fake_sync_out_merge(completed: bool):
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        commit_hash = "test-commit-hash" if completed else ""
+
         return SyncMergeResult(
             merged=completed,
+            committed=completed,
             failed=False,
-            message="Sync or commit succeeded.",
+            commit_hash=commit_hash,
+            worktree_path=worktree_path,
+            has_changes=completed,
+            has_uncommitted_changes=False,
+            message=(
+                f"Commit created: {commit_hash}."
+                if completed
+                else "Skipped sync or commit because RALPH did not complete."
+            ),
         )
 
     monkeypatch.setattr(
@@ -212,10 +229,19 @@ def _patch_failing_test_runner(monkeypatch) -> None:
 
 
 def _patch_stubbed_no_change_sync_merge(monkeypatch) -> None:
-    def fake_sync_out_merge(completed: bool):
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
         return SyncMergeResult(
             merged=False,
+            committed=False,
             failed=False,
+            worktree_path=worktree_path,
+            has_changes=False,
             message="Sync or merge is stubbed in this tracer-bullet slice.",
         )
 
@@ -227,10 +253,19 @@ def _patch_stubbed_no_change_sync_merge(monkeypatch) -> None:
 
 
 def _patch_failed_sync_merge(monkeypatch) -> None:
-    def fake_sync_out_merge(completed: bool):
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
         return SyncMergeResult(
             merged=False,
+            committed=False,
             failed=True,
+            worktree_path=worktree_path,
+            has_changes=True,
             message="Sync or commit failed.",
         )
 
@@ -239,6 +274,431 @@ def _patch_failed_sync_merge(monkeypatch) -> None:
         "i_sync_out_merge",
         fake_sync_out_merge,
     )
+
+
+def test_ralph_commits_successful_work_after_tests_pass(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    commit_hash = "abc123issue024"
+    event_order: list[str] = []
+    sync_calls: list[dict[str, object]] = []
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        event_order.append("tests")
+
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        assert event_order == ["tests"]
+        event_order.append("commit")
+        sync_calls.append(
+            {
+                "completed": completed,
+                "worktree_path": worktree_path,
+                "issue_number": issue_number,
+                "issue_title": issue_title,
+                "commit_message_template": commit_message_template,
+            }
+        )
+
+        return SyncMergeResult(
+            merged=True,
+            committed=True,
+            failed=False,
+            commit_hash=commit_hash,
+            worktree_path=worktree_path,
+            has_changes=True,
+            has_uncommitted_changes=False,
+            message=f"Commit created: {commit_hash}.",
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=True,
+            preserved=False,
+            reason="removed_clean_worktree",
+            message=f"Removed clean worktree: {worktree_path}",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=24,
+                title="Commit successful work",
+                body="RALPH should commit only after tests pass.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert event_order == ["tests", "commit"]
+    assert len(sync_calls) == 1
+    assert sync_calls[0]["completed"] is True
+    assert sync_calls[0]["worktree_path"] == worktree_path
+    assert sync_calls[0]["issue_number"] == 24
+    assert sync_calls[0]["issue_title"] == "Commit successful work"
+    assert sync_calls[0]["commit_message_template"] == (
+        ralph_module.setup_config.commit_message_template
+    )
+
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": True,
+            "has_uncommitted_changes": None,
+        }
+    ]
+
+    assert result.status == "complete"
+    assert result.completed is True
+    assert commit_hash in result.message
+    assert "Commit created" in result.message
+    assert "Removed clean worktree:" in result.message
+
+
+def test_ralph_preserves_worktree_and_skips_commit_when_tests_fail(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=False,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests failed through the sandbox seam.",
+            stdout="test stdout",
+            stderr="pytest failed",
+            exit_code=1,
+        )
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError("i_sync_out_merge() should not be called when tests fail.")
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. Tests failed.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=24,
+                title="Commit successful work",
+                body="RALPH should skip commit when tests fail.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "failed"
+    assert result.completed is False
+    assert "Tests failed" in result.message
+    assert "pytest failed" in result.message
+    assert "Preserved worktree:" in result.message
+    assert str(worktree_path) in result.message
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": False,
+            "has_uncommitted_changes": None,
+        }
+    ]
+
+
+def test_ralph_returns_failed_and_preserves_worktree_when_commit_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        return SyncMergeResult(
+            merged=False,
+            committed=False,
+            failed=True,
+            worktree_path=worktree_path,
+            has_changes=True,
+            message="Commit failed. fatal: unable to create commit.",
+            stderr="fatal: unable to create commit.",
+            exit_code=128,
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. Commit failed.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=24,
+                title="Commit successful work",
+                body="RALPH should preserve worktree when commit fails.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "failed"
+    assert result.completed is False
+    assert "Commit failed" in result.message
+    assert "Preserved worktree:" in result.message
+    assert str(worktree_path) in result.message
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": False,
+            "has_uncommitted_changes": None,
+        }
+    ]
+
+
+def test_ralph_reports_commit_hash_and_preserved_path_when_worktree_stays_dirty(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+    commit_hash = "dirtycommit123"
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        return SyncMergeResult(
+            merged=True,
+            committed=True,
+            failed=False,
+            commit_hash=commit_hash,
+            worktree_path=worktree_path,
+            has_changes=True,
+            has_uncommitted_changes=True,
+            status_output=" M src/generated_after_commit.py",
+            message=(
+                f"Commit created: {commit_hash}. "
+                "Worktree still has uncommitted changes after commit."
+            ),
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="worktree_dirty",
+            message=f"Preserved worktree: {worktree_path}. Git detected uncommitted changes.",
+            status_output=" M src/generated_after_commit.py",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=24,
+                title="Commit successful work",
+                body="RALPH should report dirty worktree preservation after commit.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "complete"
+    assert result.completed is True
+    assert commit_hash in result.message
+    assert "Commit created" in result.message
+    assert "still has uncommitted changes" in result.message
+    assert "Preserved worktree:" in result.message
+    assert str(worktree_path) in result.message
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": True,
+            "has_uncommitted_changes": True,
+        }
+    ]
 
 
 def test_ralph_passes_sandbox_handle_to_test_runner(

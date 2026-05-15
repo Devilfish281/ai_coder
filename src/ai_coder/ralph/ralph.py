@@ -335,7 +335,31 @@ def i_ralph_run(
     # 10. Sync or merge the finished work back to the host repo.
     logger.info("Step 10: Sync or merge the finished work back to the host repo.")
 
-    sync_result = i_sync_out_merge(orchestrator_result.completed and test_result.passed)
+    should_commit = (
+        orchestrator_result.completed
+        and test_result.passed
+        and not getattr(test_result, "blocked", False)
+    )
+
+    if should_commit:
+        sync_result = i_sync_out_merge(
+            completed=True,
+            worktree_path=worktree_result.worktree_path,
+            issue_number=selected_issue.number,
+            issue_title=selected_issue.title,
+            commit_message_template=setup_config.commit_message_template,
+        )
+    else:
+        sync_result = SyncMergeResult(
+            merged=False,
+            committed=False,
+            failed=False,
+            worktree_path=worktree_result.worktree_path,
+            message=(
+                "Skipped sync or commit because RALPH did not complete "
+                "or tests did not pass."
+            ),
+        )
 
     logger.info(sync_result.message)
 
@@ -355,7 +379,6 @@ def i_ralph_run(
     logger.info(close_result.message)
 
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
-
     logger.info("Step 12: Preserve or clean up the worktree based on final run state.")
 
     cleanup_completed = (
@@ -364,10 +387,15 @@ def i_ralph_run(
         and not getattr(sync_result, "failed", False)
     )
 
+    cleanup_has_uncommitted_changes = (
+        True if getattr(sync_result, "has_uncommitted_changes", False) else None
+    )
+
     cleanup_result = i_worktree_cleanup(
         repo_path=repository_result.repo_path,
         worktree_path=worktree_result.worktree_path,
         completed=cleanup_completed,
+        has_uncommitted_changes=cleanup_has_uncommitted_changes,
     )
 
     logger.info(f"Worktree removed: {cleanup_result.removed}")
@@ -397,6 +425,8 @@ def i_ralph_run(
         message_parts.append(_format_test_result_diagnostics(test_result))
 
     if getattr(sync_result, "failed", False):
+        message_parts.append(sync_result.message)
+    elif getattr(sync_result, "committed", False):
         message_parts.append(sync_result.message)
 
     if result_status == RALPH_STATUS_NO_CHANGES:
