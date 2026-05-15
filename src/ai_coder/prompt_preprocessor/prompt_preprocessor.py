@@ -11,7 +11,7 @@ def i_prompt_preprocess(raw_prompt: str, values: Mapping[str, object]) -> str:
         prepared_prompt = prepared_prompt.replace(
             f"{{{{{key}}}}}",
             _prompt_value_to_text(value),
-        )  #  Changed Code
+        )
 
     return prepared_prompt
 

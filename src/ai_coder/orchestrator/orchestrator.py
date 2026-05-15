@@ -62,8 +62,8 @@ def i_orchestrator_run(
             completion_token=completion_token,
         )
 
-        if completion_result.completed:  #  Changed Code
-            logger.info(completion_result.message)  #  Changed Code
+        if completion_result.completed:
+            logger.info(completion_result.message)
             return OrchestratorResult(
                 completed=True,
                 iterations=iteration_number,

@@ -304,6 +304,196 @@ def test_ralph_passes_sandbox_handle_to_test_runner(
     assert received_test_runner_handles == [fake_sandbox_handle]
 
 
+def test_ralph_passes_repository_context_test_command_to_test_runner(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
+
+    captured_commands: list[tuple[str, ...] | None] = []
+
+    def fake_repository_context_discover(repo_path):
+        return RepositoryContextResult(
+            repo_path=tmp_path,
+            package_manager="poetry",
+            test_command="poetry run pytest tests/test_runner/test_test_runner.py",
+            test_command_source="configured",
+            project_files=("pyproject.toml", "poetry.lock", "src/", "tests/"),
+            useful_signals=("Python project", "Uses Poetry", "Uses pytest"),
+            prompt_summary=(
+                "Repository context:\n"
+                "- Package manager: poetry\n"
+                "- Test command: poetry run pytest tests/test_runner/test_test_runner.py"
+            ),
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        captured_commands.append(command)
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fake_repository_context_discover,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=23,
+                title="Run pytest through sandbox seam",
+                body="RALPH should pass the repository context test command to the test runner.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "complete"
+    assert captured_commands == [
+        ("poetry", "run", "pytest", "tests/test_runner/test_test_runner.py")
+    ]
+
+
+def test_ralph_message_includes_test_diagnostics_when_pytest_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_stubbed_no_change_sync_merge(monkeypatch)
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=False,
+            command=("poetry", "run", "pytest"),
+            message="Tests failed through the sandbox seam.",
+            stdout="stdout text",
+            stderr="stderr text",
+            exit_code=1,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=23,
+                title="Run pytest through sandbox seam",
+                body="RALPH should show pytest diagnostics when tests fail.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "failed"
+    assert result.completed is False
+    assert "Tests failed through the sandbox seam." in result.message
+    assert "Test command: poetry run pytest" in result.message
+    assert "Test exit code: 1" in result.message
+    assert "stdout text" in result.message
+    assert "stderr text" in result.message
+    assert "Preserved worktree:" in result.message
+
+
+def test_ralph_returns_blocked_when_test_command_is_missing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_stubbed_no_change_sync_merge(monkeypatch)
+
+    def fake_repository_context_discover(repo_path):
+        return RepositoryContextResult(
+            repo_path=tmp_path,
+            package_manager="unknown",
+            test_command="",
+            test_command_source="unknown",
+            project_files=(),
+            useful_signals=("Repository context unavailable",),
+            prompt_summary=(
+                "Repository context:\n"
+                "- Package manager: unknown\n"
+                "- Test command: unknown"
+            ),
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=False,
+            command=(),
+            message="Test command is missing. Configure TEST_COMMAND before running RALPH verification.",
+            exit_code=1,
+            blocked=True,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fake_repository_context_discover,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=23,
+                title="Run pytest through sandbox seam",
+                body="RALPH should not complete when no test command exists.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == "blocked"
+    assert result.completed is False
+    assert "test command is missing" in result.message.lower()
+    assert "Preserved worktree:" in result.message
+
+
 def test_ralph_default_agent_provider_runs_through_sandbox_seam(
     monkeypatch,
     tmp_path,
@@ -635,7 +825,7 @@ def test_ralph_blocks_when_sandbox_startup_fails(
 
     cleanup_calls: list[dict[str, object]] = []
 
-    def fake_worktree_cleanup(  #  Changed Code
+    def fake_worktree_cleanup(
         repo_path,
         worktree_path,
         completed,
@@ -685,7 +875,7 @@ def test_ralph_blocks_when_sandbox_startup_fails(
     monkeypatch.setattr(
         ralph_module,
         "i_worktree_cleanup",
-        fake_worktree_cleanup,  #  Changed Code
+        fake_worktree_cleanup,
     )
 
     provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
@@ -1406,7 +1596,7 @@ def test_ralph_returns_incomplete_status_when_orchestrator_does_not_complete(
     assert result.selected_issue.number == 10
     assert result.orchestrator_result is not None
     assert result.completed is False
-    assert result.status == "incomplete"  #  Changed Code
+    assert result.status == "incomplete"
     assert "RALPH stopped before completion." in result.message
     assert "Preserved worktree:" in result.message
     assert str(tmp_path / "worktree") in result.message
@@ -1424,7 +1614,7 @@ def test_ralph_returns_clear_result_when_no_issue_is_selected(
     assert result.prompt == ""
     assert result.orchestrator_result is None
     assert result.completed is False
-    assert result.status == "blocked"  #  Changed Code
+    assert result.status == "blocked"
     assert result.message == "No open actionable issue selected."
 
 
@@ -1607,7 +1797,7 @@ def test_ralph_incomplete_run_preserves_worktree_and_reports_path(
     )
 
     assert result.completed is False
-    assert result.status == "incomplete"  #  Changed Code
+    assert result.status == "incomplete"
     assert "RALPH stopped before completion." in result.message
     assert "Preserved worktree:" in result.message
     assert str(worktree_path) in result.message
