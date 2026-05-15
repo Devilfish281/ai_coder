@@ -292,7 +292,7 @@ def i_ralph_run(
 
     # 8. Detect whether the task is complete.
     logger.info("Step 8: Detect whether the task is complete.")
-    completion_result = i_completion_detector_detect(orchestrator_result.completed)
+    completion_result = i_completion_detector_detect(orchestrator_result.final_output)
 
     logger.info(completion_result.message)
 
