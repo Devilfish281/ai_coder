@@ -1,8 +1,9 @@
+# src/ai_coder/completion_detector/completion_detector.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-# logger & setup_config
+from ai_coder.agent_provider import COMPLETE_TOKEN  #  Changed Code
 from ai_coder.setup_config import c_setup_config
 from ai_coder.my_utils.env_loader import load_dotenv_once
 
@@ -17,17 +18,23 @@ class CompletionDetectionResult:
     message: str
 
 
-def i_completion_detector_detect(completed: bool) -> CompletionDetectionResult:
+def i_completion_detector_detect(  #  Changed Code
+    output_text: str,  #  Changed Code
+    completion_token: str = COMPLETE_TOKEN,  #  Added Code
+) -> CompletionDetectionResult:
     logger.info("Starting completion detection.")
-    if completed:
-        logger.info("The orchestrator detected the completion signal.")
+
+    if completion_token in output_text:  #  Changed Code
+        message = f"The completion detector found {completion_token}."  #  Added Code
+        logger.info(message)  #  Changed Code
         return CompletionDetectionResult(
             completed=True,
-            message="The orchestrator detected the completion signal.",
+            message=message,  #  Changed Code
         )
 
-    logger.info("The orchestrator did not detect the completion signal.")
+    message = f"The completion detector did not find {completion_token}."  #  Added Code
+    logger.info(message)  #  Changed Code
     return CompletionDetectionResult(
         completed=False,
-        message="The orchestrator did not detect the completion signal.",
+        message=message,  #  Changed Code
     )
