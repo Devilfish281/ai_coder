@@ -70,14 +70,16 @@ from ai_coder.repository_context import (
 
 
 from ai_coder.sandbox_provider import i_sandbox_start
-from ai_coder.sync_out import i_sync_out_merge
-from ai_coder.test_runner import i_test_runner_run
 
 
+from ai_coder.sync_out import SyncMergeResult, i_sync_out_merge
+from ai_coder.test_runner import TestRunResult, i_test_runner_run
 from ai_coder.worktree_manager import (
+    WorktreeCleanupResult,
     i_worktree_cleanup,
     i_worktree_create,
 )
+
 
 from ai_coder.setup_config import c_setup_config
 from ai_coder.my_utils.env_loader import load_dotenv_once
@@ -106,6 +108,21 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 """
 
 
+RALPH_STATUS_COMPLETE = "complete"
+RALPH_STATUS_INCOMPLETE = "incomplete"
+RALPH_STATUS_FAILED = "failed"
+RALPH_STATUS_BLOCKED = "blocked"
+RALPH_STATUS_NO_CHANGES = "no_changes"
+
+RALPH_RESULT_STATUSES = (
+    RALPH_STATUS_COMPLETE,
+    RALPH_STATUS_INCOMPLETE,
+    RALPH_STATUS_FAILED,
+    RALPH_STATUS_BLOCKED,
+    RALPH_STATUS_NO_CHANGES,
+)
+
+
 @dataclass(frozen=True)
 class RalphResult:
     selected_issue: GitHubIssue | None
@@ -113,7 +130,7 @@ class RalphResult:
     orchestrator_result: OrchestratorResult | None
     completed: bool
     message: str
-    status: str = "incomplete"
+    status: str = RALPH_STATUS_INCOMPLETE
 
 
 def i_ralph_run(
@@ -123,6 +140,7 @@ def i_ralph_run(
     max_iterations: int = 3,
     prompt_path: str | Path | None = None,
     repo_path: str | Path | None = None,
+    allow_no_changes: bool = False,
 ) -> RalphResult:
     logger.info("Starting RALPH run...")
 
@@ -172,8 +190,9 @@ def i_ralph_run(
             orchestrator_result=None,
             completed=False,
             message="No open actionable issue selected.",
-            status="incomplete",
+            status=RALPH_STATUS_BLOCKED,  #  Changed Code
         )
+
     logger.info(f"Selected issue #{selected_issue.number}: {selected_issue.title}")
 
     # 4. Create a safe working copy using a Git worktree.
@@ -308,7 +327,8 @@ def i_ralph_run(
 
     # 10. Sync or merge the finished work back to the host repo.
     logger.info("Step 10: Sync or merge the finished work back to the host repo.")
-    sync_result = i_sync_out_merge(orchestrator_result.completed)
+
+    sync_result = i_sync_out_merge(orchestrator_result.completed and test_result.passed)
 
     logger.info(sync_result.message)
 
@@ -328,11 +348,19 @@ def i_ralph_run(
     logger.info(close_result.message)
 
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
+
     logger.info("Step 12: Preserve or clean up the worktree based on final run state.")
+
+    cleanup_completed = (
+        orchestrator_result.completed
+        and test_result.passed
+        and not getattr(sync_result, "failed", False)
+    )
+
     cleanup_result = i_worktree_cleanup(
         repo_path=repository_result.repo_path,
         worktree_path=worktree_result.worktree_path,
-        completed=orchestrator_result.completed,
+        completed=cleanup_completed,
     )
 
     logger.info(f"Worktree removed: {cleanup_result.removed}")
@@ -340,12 +368,31 @@ def i_ralph_run(
     logger.info(cleanup_result.reason)
     logger.info(cleanup_result.message)
 
-    result_status = _status_from_orchestrator_result(orchestrator_result)
+    code_changes_detected = _code_changes_detected_from_cleanup(cleanup_result)
+
+    result_status = _status_from_run_results(
+        orchestrator_result=orchestrator_result,
+        test_result=test_result,
+        sync_result=sync_result,
+        cleanup_result=cleanup_result,
+        allow_no_changes=allow_no_changes,
+        code_changes_detected=code_changes_detected,
+    )
+
     workflow_message = _workflow_message_for_status(result_status)
     message_parts = [workflow_message]
 
     if orchestrator_result.error:
         message_parts.append(orchestrator_result.error)
+
+    if not test_result.passed:
+        message_parts.append(test_result.message)
+
+    if getattr(sync_result, "failed", False):
+        message_parts.append(sync_result.message)
+
+    if result_status == RALPH_STATUS_NO_CHANGES:
+        message_parts.append(sync_result.message)
 
     message_parts.append(cleanup_result.message)
     message_result = "\n".join(message_parts)
@@ -359,7 +406,7 @@ def i_ralph_run(
         selected_issue=selected_issue,
         prompt=prompt,
         orchestrator_result=orchestrator_result,
-        completed=orchestrator_result.completed,
+        completed=result_status == RALPH_STATUS_COMPLETE,
         message=message_result,
         status=result_status,
     )
@@ -378,37 +425,66 @@ def _build_default_agent_provider(
     return FakeTestAgentProvider(sandbox_handle)
 
 
-def _status_from_orchestrator_result(
+def _status_from_run_results(
     orchestrator_result: OrchestratorResult,
+    test_result: TestRunResult,
+    sync_result: SyncMergeResult,
+    cleanup_result: WorktreeCleanupResult,
+    allow_no_changes: bool = False,
+    code_changes_detected: bool = False,
 ) -> str:
-    if orchestrator_result.completed:
-        return "complete"
+    if not orchestrator_result.completed:
+        if (
+            orchestrator_result.error
+            and orchestrator_result.error
+            != "Maximum iterations reached before completion."
+        ):
+            return RALPH_STATUS_FAILED
 
-    if (
-        orchestrator_result.error
-        and orchestrator_result.error != "Maximum iterations reached before completion."
-    ):
-        return "failed"
+        return RALPH_STATUS_INCOMPLETE
 
-    return "incomplete"
+    if not test_result.passed:
+        return RALPH_STATUS_FAILED
+
+    if sync_result.failed:
+        return RALPH_STATUS_FAILED
+
+    if sync_result.merged:
+        return RALPH_STATUS_COMPLETE
+
+    if not code_changes_detected:
+        if allow_no_changes:
+            return RALPH_STATUS_COMPLETE
+
+        return RALPH_STATUS_NO_CHANGES
+
+    return RALPH_STATUS_FAILED
+
+
+def _code_changes_detected_from_cleanup(
+    cleanup_result: WorktreeCleanupResult,
+) -> bool:
+    if cleanup_result.reason == "worktree_dirty":
+        return True
+
+    if cleanup_result.status_output.strip():
+        return True
+
+    return False
 
 
 def _workflow_message_for_status(status: str) -> str:
-    if status == "complete":
+    if status == RALPH_STATUS_COMPLETE:
         return "RALPH completed the selected issue."
 
-    if status == "failed":
+    if status == RALPH_STATUS_FAILED:
         return "RALPH failed before completion."
 
-    return "RALPH stopped before completion."
+    if status == RALPH_STATUS_BLOCKED:
+        return "RALPH was blocked before completion."
 
-
-def _workflow_message_for_status(status: str) -> str:
-    if status == "complete":
-        return "RALPH completed the selected issue."
-
-    if status == "failed":
-        return "RALPH failed before completion."
+    if status == RALPH_STATUS_NO_CHANGES:
+        return "RALPH completed, but no code changes were detected."
 
     return "RALPH stopped before completion."
 

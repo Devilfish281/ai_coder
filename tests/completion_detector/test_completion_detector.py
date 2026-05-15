@@ -21,22 +21,16 @@ def test_orchestrator_stops_when_agent_outputs_complete_token() -> None:
     assert result.outputs == ("Working on it", "Finished\n<promise>COMPLETE</promise>")
 
 
-def test_orchestrator_does_not_complete_for_malformed_promise_tag() -> (
-    None
-):  #  Added Code
-    provider = MockAgentProvider(  #  Added Code
-        responses=["Finished <promise>complete</promise>"]  #  Added Code
-    )  #  Added Code
+def test_orchestrator_does_not_complete_for_malformed_promise_tag() -> None:
+    provider = MockAgentProvider(responses=["Finished <promise>complete</promise>"])
 
-    result = i_orchestrator_run(provider, "prompt", max_iterations=1)  #  Added Code
+    result = i_orchestrator_run(provider, "prompt", max_iterations=1)
 
-    assert result.completed is False  #  Added Code
-    assert result.iterations == 1  #  Added Code
-    assert (
-        result.error == "Maximum iterations reached before completion."
-    )  #  Added Code
-    assert result.outputs == ("Finished <promise>complete</promise>",)  #  Added Code
-    assert result.final_output == "Finished <promise>complete</promise>"  #  Added Code
+    assert result.completed is False
+    assert result.iterations == 1
+    assert result.error == "Maximum iterations reached before completion."
+    assert result.outputs == ("Finished <promise>complete</promise>",)
+    assert result.final_output == "Finished <promise>complete</promise>"
 
 
 def test_orchestrator_stops_at_max_iterations() -> None:

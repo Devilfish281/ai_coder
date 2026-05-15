@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ai_coder.agent_provider import AgentProvider, COMPLETE_TOKEN
-from ai_coder.completion_detector import i_completion_detector_detect  #  Added Code
+from ai_coder.completion_detector import i_completion_detector_detect
 
 from ai_coder.setup_config import c_setup_config
 from ai_coder.my_utils.env_loader import load_dotenv_once
@@ -57,10 +57,10 @@ def i_orchestrator_run(
         for idx, output in enumerate(outputs, start=1):
             logger.info(f"Output {idx}: {output}")
 
-        completion_result = i_completion_detector_detect(  #  Added Code
-            response.output,  #  Added Code
-            completion_token=completion_token,  #  Added Code
-        )  #  Added Code
+        completion_result = i_completion_detector_detect(
+            response.output,
+            completion_token=completion_token,
+        )
 
         if completion_result.completed:  #  Changed Code
             logger.info(completion_result.message)  #  Changed Code

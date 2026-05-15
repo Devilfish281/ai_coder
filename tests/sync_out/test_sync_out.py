@@ -1,6 +1,8 @@
+# tests/sync_out/test_sync_out.py
 from pathlib import Path
 
-from ai_coder.sync_out import i_sync_out_merge, i_sync_out_run
+
+from ai_coder.sync_out import SyncMergeResult, i_sync_out_merge, i_sync_out_run
 
 
 def test_sync_out_run_returns_clear_minimal_result() -> None:
@@ -15,4 +17,17 @@ def test_sync_out_merge_stub_does_not_merge() -> None:
     result = i_sync_out_merge(completed=True)
 
     assert result.merged is False
+    assert result.failed is False
     assert "stubbed" in result.message
+
+
+def test_sync_merge_result_can_represent_explicit_failure() -> None:
+    result = SyncMergeResult(
+        merged=False,
+        failed=True,
+        message="Sync or commit failed.",
+    )
+
+    assert result.merged is False
+    assert result.failed is True
+    assert "failed" in result.message

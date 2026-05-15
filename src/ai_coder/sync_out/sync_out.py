@@ -1,3 +1,4 @@
+# src/ai_coder/sync_out/sync_out.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ class SyncOutResult:
 class SyncMergeResult:
     merged: bool
     message: str
+    failed: bool = False
 
 
 def i_sync_out_run(source_path: str | Path, target_path: str | Path) -> SyncOutResult:
