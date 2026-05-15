@@ -148,11 +148,28 @@ def _patch_passing_test_runner(monkeypatch) -> None:
 
 
 def _patch_successful_sync_merge(monkeypatch) -> None:
-    def fake_sync_out_merge(completed: bool):
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        commit_hash = "test-commit-hash" if completed else ""
+
         return SyncMergeResult(
             merged=completed,
+            committed=completed,
             failed=False,
-            message="Sync or commit succeeded.",
+            commit_hash=commit_hash,
+            worktree_path=worktree_path,
+            has_changes=completed,
+            has_uncommitted_changes=False,
+            message=(
+                f"Commit created: {commit_hash}."
+                if completed
+                else "Skipped sync or commit because RALPH did not complete."
+            ),
         )
 
     monkeypatch.setattr(
