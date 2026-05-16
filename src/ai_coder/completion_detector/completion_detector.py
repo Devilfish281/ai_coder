@@ -1,4 +1,12 @@
 # src/ai_coder/completion_detector/completion_detector.py
+"""Detect whether agent output contains the RALPH completion token.
+
+This module provides the completion-detector seam used by the orchestrator.
+The detector is intentionally small: it treats output as plain text and marks
+the task complete only when the configured completion token appears in that
+text.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +22,14 @@ logger = setup_config.get_logger()
 
 @dataclass(frozen=True)
 class CompletionDetectionResult:
+    """Store the result of checking agent output for completion.
+
+    :ivar completed: Whether the completion token was found in the output text.
+    :vartype completed: bool
+    :ivar message: Human-readable explanation of the detection result.
+    :vartype message: str
+    """
+
     completed: bool
     message: str
 
@@ -22,6 +38,20 @@ def i_completion_detector_detect(
     output_text: str,
     completion_token: str = COMPLETE_TOKEN,
 ) -> CompletionDetectionResult:
+    """Detect whether output text contains the completion token.
+
+    The detector performs a plain substring check. It does not parse XML,
+    execute text, run shell commands, or interpret the output as structured
+    data. This keeps the completion seam simple and predictable for tests.
+
+    :param output_text: Agent output text to inspect.
+    :type output_text: str
+    :param completion_token: Token that marks a task as complete.
+    :type completion_token: str
+    :return: Result showing whether the token was found.
+    :rtype: CompletionDetectionResult
+    """
+
     logger.info("Starting completion detection.")
 
     if completion_token in output_text:

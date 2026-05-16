@@ -1,4 +1,12 @@
 # src/ai_coder/orchestrator/orchestrator.py
+"""Orchestrate an agent run until completion, failure, or max iterations.
+
+This module provides the small public orchestration seam for RALPH. The
+orchestrator repeatedly asks an agent provider to work on the same prompt and
+stops when the configured completion token is detected, an agent error occurs,
+or the maximum iteration limit is reached.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,6 +24,22 @@ logger = setup_config.get_logger()
 
 @dataclass(frozen=True)
 class OrchestratorResult:
+    """Store the final result of an orchestrator run.
+
+    :ivar completed: Whether the agent produced the expected completion token.
+    :vartype completed: bool
+    :ivar iterations: Number of agent iterations that were attempted.
+    :vartype iterations: int
+    :ivar outputs: Agent outputs collected during successful iterations.
+    :vartype outputs: tuple[str, ...]
+    :ivar final_output: Last useful agent output. This is empty when the agent
+        fails before producing output.
+    :vartype final_output: str
+    :ivar error: Error message when the agent fails or the run reaches the
+        maximum iteration limit before completion.
+    :vartype error: str | None
+    """
+
     completed: bool
     iterations: int
     outputs: tuple[str, ...]
@@ -29,6 +53,26 @@ def i_orchestrator_run(
     max_iterations: int = 3,
     completion_token: str = COMPLETE_TOKEN,
 ) -> OrchestratorResult:
+    """Run the agent loop until completion, error, or max iterations.
+
+    The orchestrator sends the same prompt to the configured agent provider on
+    each iteration. After every successful agent response, it checks the output
+    with the completion detector. The run completes only when the completion
+    detector finds the expected token.
+
+    :param agent_provider: Adapter that satisfies the agent provider seam.
+    :type agent_provider: AgentProvider
+    :param prompt: Prompt text sent to the agent on each iteration.
+    :type prompt: str
+    :param max_iterations: Maximum number of times to call the agent provider.
+    :type max_iterations: int
+    :param completion_token: Token that marks the task as complete.
+    :type completion_token: str
+    :return: Result describing completion state, collected outputs, and errors.
+    :rtype: OrchestratorResult
+    :raises ValueError: If ``max_iterations`` is less than ``1``.
+    """
+
     logger.info("Starting orchestrator run.")
     if max_iterations < 1:
         raise ValueError("max_iterations must be at least 1")
