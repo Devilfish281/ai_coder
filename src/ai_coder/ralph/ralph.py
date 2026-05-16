@@ -217,7 +217,7 @@ def i_ralph_run(
 
     if not repository_result.ready:
         logger.info(
-            "Repository context is blocked. RALPH will stop before issue selection."
+            "EXIT:`Repository context is blocked. RALPH will stop before issue selection."
         )
 
         return RalphResult(
