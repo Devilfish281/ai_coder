@@ -1,5 +1,7 @@
 # src/ai_coder/ralph/ralph.py
 """
+Run the RALPH local coding-agent workflow.
+
 RALPH means:
 
 R = Repository
@@ -35,6 +37,9 @@ Development workflow:
 6. Verify — run all tests before committing.
 7. Commit — make one commit with message starting with `RALPH:`.
 8. Close — only close the issue after tests pass and code is committed.
+
+This module exposes one main interface seam: :func:`i_ralph_run`.
+The remaining functions are private helpers that keep the public seam small.
 """
 
 from __future__ import annotations
@@ -89,6 +94,7 @@ load_dotenv_once()
 setup_config = c_setup_config.get_instance()
 logger = setup_config.get_logger()
 
+#: Default prompt text used when the caller does not pass a prompt file.
 DEFAULT_RALPH_PROMPT_TEMPLATE = """# RALPH Core Instructions
 
 You are RALPH — Repository Autonomous Local Patch Helper.
@@ -109,12 +115,18 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 """
 
 
+#: Status returned when RALPH completed, tests passed, and work was merged.
 RALPH_STATUS_COMPLETE = "complete"
+#: Status returned when RALPH stopped before the completion signal.
 RALPH_STATUS_INCOMPLETE = "incomplete"
+#: Status returned when an agent, test, sync, or cleanup step failed.
 RALPH_STATUS_FAILED = "failed"
+#: Status returned when RALPH could not safely start or continue.
 RALPH_STATUS_BLOCKED = "blocked"
+#: Status returned when the run completed but no code changes were detected.
 RALPH_STATUS_NO_CHANGES = "no_changes"
 
+#: Complete set of valid :class:`RalphResult` status values.
 RALPH_RESULT_STATUSES = (
     RALPH_STATUS_COMPLETE,
     RALPH_STATUS_INCOMPLETE,
@@ -126,6 +138,25 @@ RALPH_RESULT_STATUSES = (
 
 @dataclass(frozen=True)
 class RalphResult:
+    """
+    Store the final result of one RALPH workflow run.
+
+    :ivar selected_issue: GitHub issue selected for the run, or ``None`` when
+        RALPH stopped before issue selection.
+    :vartype selected_issue: GitHubIssue | None
+    :ivar prompt: Final prompt sent to the agent after preprocessing.
+    :vartype prompt: str
+    :ivar orchestrator_result: Result returned by the orchestrator, or ``None``
+        when RALPH stopped before the agent loop.
+    :vartype orchestrator_result: OrchestratorResult | None
+    :ivar completed: ``True`` when the workflow reached the complete status.
+    :vartype completed: bool
+    :ivar message: Human-readable summary of the final workflow state.
+    :vartype message: str
+    :ivar status: Stable machine-readable status for the workflow result.
+    :vartype status: str
+    """
+
     selected_issue: GitHubIssue | None
     prompt: str
     orchestrator_result: OrchestratorResult | None
@@ -143,6 +174,38 @@ def i_ralph_run(
     repo_path: str | Path | None = None,
     allow_no_changes: bool = False,
 ) -> RalphResult:
+    """
+    Run one end-to-end RALPH tracer-bullet workflow.
+
+    The workflow starts from a Git repository, selects one actionable issue,
+    creates a worktree, starts a sandbox, prepares a prompt, runs the agent,
+    checks completion, runs tests, syncs successful work, closes the issue only
+    after success, and then cleans up or preserves the worktree.
+
+    :param issues: Optional iterable of issues to use instead of loading issues
+        from configuration, a file, or the GitHub API.
+    :type issues: Iterable[GitHubIssue] | None
+    :param prompt_template: Inline prompt template used as the base RALPH
+        prompt.
+    :type prompt_template: str
+    :param agent_provider: Optional provider used by the orchestrator. When not
+        provided, RALPH builds a default fake test provider from the sandbox
+        handle.
+    :type agent_provider: AgentProvider | None
+    :param max_iterations: Maximum number of orchestrator iterations allowed.
+    :type max_iterations: int
+    :param prompt_path: Optional path to an additional prompt file.
+    :type prompt_path: str | Path | None
+    :param repo_path: Optional repository path. When omitted, the configured
+        repository path is used.
+    :type repo_path: str | Path | None
+    :param allow_no_changes: Treat a completed, passing run with no detected code
+        changes as complete instead of ``no_changes``.
+    :type allow_no_changes: bool
+    :return: Final workflow result.
+    :rtype: RalphResult
+    """
+
     logger.info("Starting RALPH run...")
 
     # 1. Start with a Git repository.
@@ -454,6 +517,21 @@ def _build_default_agent_provider(
     agent_provider: AgentProvider | None,
     sandbox_handle: Any,
 ) -> AgentProvider:
+    """
+    Return the caller-provided agent provider or build the default fake provider.
+
+    :param agent_provider: Optional provider supplied by tests or callers.
+    :type agent_provider: AgentProvider | None
+    :param sandbox_handle: Sandbox handle used to build the default provider.
+    :type sandbox_handle: Any
+    :return: Agent provider for the orchestrator loop.
+    :rtype: AgentProvider
+    :raises ValueError: If no provider is supplied and ``sandbox_handle`` is
+        ``None``.
+
+    :meta private:
+    """
+
     if agent_provider is not None:
         return agent_provider
 
@@ -464,6 +542,18 @@ def _build_default_agent_provider(
 
 
 def _build_test_command_tuple(test_command: str) -> tuple[str, ...]:
+    """
+    Convert a shell-style test command string into a command tuple.
+
+    :param test_command: Test command text discovered from configuration or the
+        repository context.
+    :type test_command: str
+    :return: Split command tuple, or an empty tuple when no command is available.
+    :rtype: tuple[str, ...]
+
+    :meta private:
+    """
+
     cleaned_test_command = test_command.strip()
 
     if not cleaned_test_command:
@@ -473,6 +563,17 @@ def _build_test_command_tuple(test_command: str) -> tuple[str, ...]:
 
 
 def _format_test_result_diagnostics(test_result: TestRunResult) -> str:
+    """
+    Build a readable diagnostic block from a failed test result.
+
+    :param test_result: Test runner result to summarize.
+    :type test_result: TestRunResult
+    :return: Multi-line text containing command, exit code, stdout, and stderr.
+    :rtype: str
+
+    :meta private:
+    """
+
     command_text = " ".join(test_result.command) if test_result.command else "<missing>"
     stdout_text = test_result.stdout if test_result.stdout else "<empty>"
     stderr_text = test_result.stderr if test_result.stderr else "<empty>"
@@ -495,6 +596,29 @@ def _status_from_run_results(
     allow_no_changes: bool = False,
     code_changes_detected: bool = False,
 ) -> str:
+    """
+    Derive the final RALPH status from the major workflow step results.
+
+    :param orchestrator_result: Result from the agent orchestration loop.
+    :type orchestrator_result: OrchestratorResult
+    :param test_result: Result from the test runner seam.
+    :type test_result: TestRunResult
+    :param sync_result: Result from the sync or commit seam.
+    :type sync_result: SyncMergeResult
+    :param cleanup_result: Result from the worktree cleanup seam.
+    :type cleanup_result: WorktreeCleanupResult
+    :param allow_no_changes: Whether no-change completion should count as
+        complete.
+    :type allow_no_changes: bool
+    :param code_changes_detected: Whether cleanup detected dirty worktree state
+        or status output.
+    :type code_changes_detected: bool
+    :return: One value from :data:`RALPH_RESULT_STATUSES`.
+    :rtype: str
+
+    :meta private:
+    """
+
     if not orchestrator_result.completed:
         if (
             orchestrator_result.error
@@ -529,6 +653,17 @@ def _status_from_run_results(
 def _code_changes_detected_from_cleanup(
     cleanup_result: WorktreeCleanupResult,
 ) -> bool:
+    """
+    Detect whether cleanup reported possible code changes.
+
+    :param cleanup_result: Worktree cleanup result to inspect.
+    :type cleanup_result: WorktreeCleanupResult
+    :return: ``True`` when cleanup reported a dirty worktree or status output.
+    :rtype: bool
+
+    :meta private:
+    """
+
     if cleanup_result.reason == "worktree_dirty":
         return True
 
@@ -539,6 +674,17 @@ def _code_changes_detected_from_cleanup(
 
 
 def _workflow_message_for_status(status: str) -> str:
+    """
+    Convert a RALPH status value into a short human-readable message.
+
+    :param status: Machine-readable RALPH status value.
+    :type status: str
+    :return: Human-readable workflow summary.
+    :rtype: str
+
+    :meta private:
+    """
+
     if status == RALPH_STATUS_COMPLETE:
         return "RALPH completed the selected issue."
 
@@ -558,6 +704,22 @@ def _resolve_issue_source(
     issues: Iterable[GitHubIssue] | None,
     setup_config: c_setup_config,
 ) -> tuple[GitHubIssue, ...]:
+    """
+    Resolve the source of GitHub issues for the current RALPH run.
+
+    The precedence is: caller-provided issues, test issue, user-configured
+    issue, issue file, then the GitHub API.
+
+    :param issues: Optional issues supplied directly by the caller.
+    :type issues: Iterable[GitHubIssue] | None
+    :param setup_config: Application configuration object.
+    :type setup_config: c_setup_config
+    :return: Issues available for selection.
+    :rtype: tuple[GitHubIssue, ...]
+
+    :meta private:
+    """
+
     logger.info("START: Resolving issue source...")
     if issues is not None:
         logger.info("Using provided issues from User arguments.")
@@ -585,6 +747,18 @@ def _resolve_issue_source(
 
 
 def _build_test_github_issue(setup_config: c_setup_config) -> GitHubIssue:
+    """
+    Build a fake GitHub issue from test configuration values.
+
+    :param setup_config: Application configuration object with test issue
+        defaults.
+    :type setup_config: c_setup_config
+    :return: Test issue used for a local tracer-bullet run.
+    :rtype: GitHubIssue
+
+    :meta private:
+    """
+
     issue_number = setup_config.issue_number if setup_config.issue_number > 0 else 1
     issue_title = setup_config.issue_title.strip() or "Minimal local RALPH loop"
     issue_body = setup_config.issue_body.strip() or (
@@ -600,6 +774,17 @@ def _build_test_github_issue(setup_config: c_setup_config) -> GitHubIssue:
 
 
 def _build_user_github_issue(setup_config: c_setup_config) -> GitHubIssue:
+    """
+    Build a GitHub issue from user-provided configuration values.
+
+    :param setup_config: Application configuration object with issue fields.
+    :type setup_config: c_setup_config
+    :return: User-configured GitHub issue.
+    :rtype: GitHubIssue
+
+    :meta private:
+    """
+
     return GitHubIssue(
         number=setup_config.issue_number,
         title=setup_config.issue_title,
@@ -612,6 +797,19 @@ def _build_master_prompt_template(
     prompt_template: str,
     prompt_path: str | Path | None,
 ) -> str:
+    """
+    Combine the inline prompt template with an optional prompt file.
+
+    :param prompt_template: Inline prompt template text.
+    :type prompt_template: str
+    :param prompt_path: Optional path to an additional project prompt file.
+    :type prompt_path: str | Path | None
+    :return: Resolved prompt template text.
+    :rtype: str
+
+    :meta private:
+    """
+
     base_prompt = i_prompt_resolve(inline_prompt=prompt_template)
 
     if prompt_path is None:
@@ -635,6 +833,19 @@ def _resolve_prompt_text(
     prompt_template: str,
     prompt_path: str | Path | None,
 ) -> str:
+    """
+    Resolve RALPH prompt text from inline text and an optional prompt file.
+
+    :param prompt_template: Inline prompt template text.
+    :type prompt_template: str
+    :param prompt_path: Optional prompt file path.
+    :type prompt_path: str | Path | None
+    :return: Raw prompt template before placeholder preprocessing.
+    :rtype: str
+
+    :meta private:
+    """
+
     logger.info("Step 6a: Resolve prompt text from file or inline prompt.")
     return _build_master_prompt_template(
         prompt_template=prompt_template,
@@ -649,6 +860,25 @@ def _preprocess_prompt_after_sandbox_ready(
     branch_name: str = "",
     worktree_path: str | Path | None = None,
 ) -> str:
+    """
+    Replace prompt placeholders after the sandbox and worktree are ready.
+
+    :param raw_prompt_template: Prompt template before placeholder replacement.
+    :type raw_prompt_template: str
+    :param selected_issue: Issue selected for this RALPH run.
+    :type selected_issue: GitHubIssue
+    :param repository_context_summary: Prompt-safe repository context summary.
+    :type repository_context_summary: str
+    :param branch_name: Worktree branch name created for the issue.
+    :type branch_name: str
+    :param worktree_path: Worktree path created for the issue.
+    :type worktree_path: str | Path | None
+    :return: Final prompt text sent to the agent.
+    :rtype: str
+
+    :meta private:
+    """
+
     logger.info("Step 6b: Preprocess prompt after sandbox is ready.")
     return i_prompt_preprocess(
         raw_prompt_template,
@@ -667,6 +897,23 @@ def _build_prompt_replacements(
     branch_name: str = "",
     worktree_path: str | Path | None = None,
 ) -> dict[str, object]:
+    """
+    Build the placeholder replacement dictionary for prompt preprocessing.
+
+    :param selected_issue: Issue selected for the current RALPH run.
+    :type selected_issue: GitHubIssue
+    :param repository_context_summary: Prompt-safe repository context summary.
+    :type repository_context_summary: str
+    :param branch_name: Worktree branch name created for the issue.
+    :type branch_name: str
+    :param worktree_path: Worktree path created for the issue.
+    :type worktree_path: str | Path | None
+    :return: Mapping of placeholder names to safe replacement values.
+    :rtype: dict[str, object]
+
+    :meta private:
+    """
+
     return {
         "ISSUE_NUMBER": selected_issue.number,
         "ISSUE_TITLE": selected_issue.title,
@@ -680,4 +927,15 @@ def _build_prompt_replacements(
 
 
 def _format_issue_labels(labels: tuple[str, ...]) -> str:
+    """
+    Format issue labels for prompt insertion.
+
+    :param labels: GitHub issue labels.
+    :type labels: tuple[str, ...]
+    :return: Comma-separated label text.
+    :rtype: str
+
+    :meta private:
+    """
+
     return ", ".join(labels)

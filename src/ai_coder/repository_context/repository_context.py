@@ -1,4 +1,11 @@
-# src/ai_coder/repository_context/repository_context.py
+"""Repository context discovery and Git safety checks for RALPH.
+
+This module provides the repository-context seam used before RALPH creates a
+worktree or builds an agent prompt. It detects the current Git repository,
+checks whether the active branch is safe, collects prompt-safe project signals,
+and infers the test command for the current project.
+"""
+
 from __future__ import annotations
 
 import fnmatch
@@ -75,6 +82,25 @@ LARGE_BINARY_FILE_SUFFIXES = (
 
 @dataclass(frozen=True)
 class RepositoryStartResult:
+    """Describe whether the host repository is ready for RALPH.
+
+    :ivar repo_path: Resolved repository path, or the attempted path when Git
+        root detection fails.
+    :vartype repo_path: Path
+    :ivar ready: Whether the repository passed the startup safety checks.
+    :vartype ready: bool
+    :ivar message: Human-readable status or blocking message.
+    :vartype message: str
+    :ivar active_branch: Current Git branch name when detected.
+    :vartype active_branch: str
+    :ivar is_clean: Whether ``git status --porcelain`` returned no changes.
+    :vartype is_clean: bool
+    :ivar status_output: Raw Git status or diagnostic output used for blocking.
+    :vartype status_output: str
+    :ivar blocked_reason: Stable machine-readable reason when startup is blocked.
+    :vartype blocked_reason: str
+    """
+
     repo_path: Path
     ready: bool
     message: str
@@ -86,6 +112,24 @@ class RepositoryStartResult:
 
 @dataclass(frozen=True)
 class RepositoryContextResult:
+    """Store prompt-safe repository details discovered for RALPH.
+
+    :ivar repo_path: Resolved repository path used for context discovery.
+    :vartype repo_path: Path
+    :ivar package_manager: Detected package manager name, such as ``poetry``.
+    :vartype package_manager: str
+    :ivar test_command: Configured or inferred test command.
+    :vartype test_command: str
+    :ivar test_command_source: Source of the test command decision.
+    :vartype test_command_source: str
+    :ivar project_files: Safe high-level project files and directories.
+    :vartype project_files: tuple[str, ...]
+    :ivar useful_signals: Human-readable project signals for the agent prompt.
+    :vartype useful_signals: tuple[str, ...]
+    :ivar prompt_summary: Text summary inserted into the RALPH prompt.
+    :vartype prompt_summary: str
+    """
+
     repo_path: Path
     package_manager: str
     test_command: str
@@ -97,16 +141,45 @@ class RepositoryContextResult:
 
 @dataclass(frozen=True)
 class GitCommandResult:
+    """Normalize Git command output for repository-context decisions.
+
+    :ivar stdout: Captured standard output from the Git command.
+    :vartype stdout: str
+    :ivar stderr: Captured standard error from the Git command.
+    :vartype stderr: str
+    :ivar exit_code: Process exit code returned by the Git command.
+    :vartype exit_code: int
+    """
+
     stdout: str
     stderr: str
     exit_code: int
 
     @property
     def succeeded(self) -> bool:
+        """Return whether the command completed successfully.
+
+        :return: ``True`` when the command exit code is ``0``.
+        :rtype: bool
+        """
+
         return self.exit_code == 0
 
 
 def i_repository_start(repo_path: str | Path | None = None) -> RepositoryStartResult:
+    """Validate that a repository is safe before RALPH starts work.
+
+    The startup check resolves the Git repository root, detects the active
+    branch, rejects detached ``HEAD`` state, and blocks when the repository has
+    uncommitted changes.
+
+    :param repo_path: Optional path inside the target repository. When omitted,
+        the current working directory is used.
+    :type repo_path: str | Path | None
+    :return: Startup result describing readiness or the blocking reason.
+    :rtype: RepositoryStartResult
+    """
+
     resolved_input_path = _resolve_input_path(repo_path)
     logger.info("Started repository context selection.")
     logger.info("Resolving repository path: %s", resolved_input_path)
@@ -220,6 +293,19 @@ def i_repository_start(repo_path: str | Path | None = None) -> RepositoryStartRe
 def i_repository_context_discover(
     repo_path: str | Path | None = None,
 ) -> RepositoryContextResult:
+    """Discover safe repository facts for the RALPH prompt.
+
+    This function intentionally gathers only high-level, prompt-safe facts. It
+    avoids reading arbitrary source content and excludes private, generated, and
+    binary-looking paths from context discovery.
+
+    :param repo_path: Optional repository path. When omitted, the current
+        working directory is used.
+    :type repo_path: str | Path | None
+    :return: Repository context result with package, test, and prompt details.
+    :rtype: RepositoryContextResult
+    """
+
     resolved_repo_path = _resolve_input_path(repo_path)
     logger.info("Starting repository context discovery: %s", resolved_repo_path)
 
@@ -279,6 +365,15 @@ def i_repository_context_discover(
 
 
 def _resolve_input_path(repo_path: str | Path | None) -> Path:
+    """Resolve an optional repository path without requiring it to exist.
+
+    :param repo_path: User-provided repository path, or ``None`` to use the
+        current working directory.
+    :type repo_path: str | Path | None
+    :return: Absolute path resolved with ``strict=False``.
+    :rtype: Path
+    """
+
     if repo_path is None:
         return Path.cwd().resolve(strict=False)
 
@@ -286,6 +381,15 @@ def _resolve_input_path(repo_path: str | Path | None) -> Path:
 
 
 def _run_git_command(command: Sequence[str]) -> GitCommandResult:
+    """Run a Git command and normalize the process result.
+
+    :param command: Complete command argument sequence to pass to
+        :func:`subprocess.run`.
+    :type command: Sequence[str]
+    :return: Normalized Git command result.
+    :rtype: GitCommandResult
+    """
+
     logger.info("Running Git repository context command: %s", list(command))
 
     try:
@@ -311,6 +415,17 @@ def _run_git_command(command: Sequence[str]) -> GitCommandResult:
 
 
 def _should_exclude_context_path(path: Path, repo_root: Path) -> bool:
+    """Return whether a path should be excluded from prompt context.
+
+    :param path: Candidate file or directory path to evaluate.
+    :type path: Path
+    :param repo_root: Repository root used to compute a relative context path.
+    :type repo_root: Path
+    :return: ``True`` when the path is private, generated, or not useful for
+        prompt-safe repository context.
+    :rtype: bool
+    """
+
     relative_path = _relative_context_path(path, repo_root)
     relative_path_text = _normalize_context_path_text(relative_path)
     file_name = path.name
@@ -344,6 +459,17 @@ def _should_exclude_context_path(path: Path, repo_root: Path) -> bool:
 
 
 def _relative_context_path(path: Path, repo_root: Path) -> Path:
+    """Return a path relative to the repository root when possible.
+
+    :param path: Candidate path to make relative.
+    :type path: Path
+    :param repo_root: Repository root path.
+    :type repo_root: Path
+    :return: Relative path when ``path`` is inside ``repo_root``; otherwise the
+        original path.
+    :rtype: Path
+    """
+
     try:
         return path.relative_to(repo_root)
     except ValueError:
@@ -351,10 +477,26 @@ def _relative_context_path(path: Path, repo_root: Path) -> Path:
 
 
 def _normalize_context_path_text(path: Path) -> str:
+    """Normalize a path for stable prompt-context filtering.
+
+    :param path: Path to normalize.
+    :type path: Path
+    :return: POSIX-style path text with leading and trailing slashes removed.
+    :rtype: str
+    """
+
     return path.as_posix().strip("/")
 
 
 def _collect_project_files(repo_path: Path) -> tuple[str, ...]:
+    """Collect safe top-level project files and directories.
+
+    :param repo_path: Repository path to inspect.
+    :type repo_path: Path
+    :return: Tuple of discovered safe project files and directories.
+    :rtype: tuple[str, ...]
+    """
+
     project_files: list[str] = []
 
     for file_name in SAFE_PROJECT_FILE_NAMES:
@@ -379,6 +521,14 @@ def _collect_project_files(repo_path: Path) -> tuple[str, ...]:
 
 
 def _detect_package_manager(project_files: tuple[str, ...]) -> str:
+    """Infer the project package manager from safe project files.
+
+    :param project_files: Safe files and directories discovered in the project.
+    :type project_files: tuple[str, ...]
+    :return: Package manager label used by repository context.
+    :rtype: str
+    """
+
     if "poetry.lock" in project_files:
         return "poetry"
 
@@ -394,6 +544,22 @@ def _detect_test_command(
     project_files: tuple[str, ...],
     configured_test_command: str,
 ) -> tuple[str, str]:
+    """Choose the configured or inferred test command.
+
+    Configured commands take priority over inferred commands.
+
+    :param repo_path: Repository path used for fallback file-system checks.
+    :type repo_path: Path
+    :param package_manager: Detected package manager label.
+    :type package_manager: str
+    :param project_files: Safe files and directories discovered in the project.
+    :type project_files: tuple[str, ...]
+    :param configured_test_command: Test command supplied by configuration.
+    :type configured_test_command: str
+    :return: Pair of ``(test_command, test_command_source)``.
+    :rtype: tuple[str, str]
+    """
+
     if configured_test_command:
         return configured_test_command, "configured"
 
@@ -416,6 +582,18 @@ def _collect_useful_signals(
     project_files: tuple[str, ...],
     test_command: str,
 ) -> tuple[str, ...]:
+    """Build human-readable project signals for the agent prompt.
+
+    :param package_manager: Detected package manager label.
+    :type package_manager: str
+    :param project_files: Safe files and directories discovered in the project.
+    :type project_files: tuple[str, ...]
+    :param test_command: Configured or inferred test command.
+    :type test_command: str
+    :return: Tuple of prompt-safe project signals.
+    :rtype: tuple[str, ...]
+    """
+
     signals: list[str] = []
 
     if "pyproject.toml" in project_files:
@@ -442,6 +620,20 @@ def _build_prompt_summary(
     project_files: tuple[str, ...],
     useful_signals: tuple[str, ...],
 ) -> str:
+    """Build the repository-context block for the RALPH prompt.
+
+    :param package_manager: Detected package manager label.
+    :type package_manager: str
+    :param test_command: Configured or inferred test command.
+    :type test_command: str
+    :param project_files: Safe files and directories discovered in the project.
+    :type project_files: tuple[str, ...]
+    :param useful_signals: Prompt-safe project signals.
+    :type useful_signals: tuple[str, ...]
+    :return: Formatted repository-context prompt summary.
+    :rtype: str
+    """
+
     important_files_text = _join_context_values(project_files)
     useful_signals_text = _join_context_values(useful_signals)
     test_command_text = test_command or "unknown"
@@ -459,6 +651,16 @@ def _build_unavailable_prompt_summary(
     repo_path: Path,
     test_command: str,
 ) -> str:
+    """Build a prompt summary for a missing repository path.
+
+    :param repo_path: Repository path that was requested but does not exist.
+    :type repo_path: Path
+    :param test_command: Configured or inferred test command, if available.
+    :type test_command: str
+    :return: Formatted unavailable-context prompt summary.
+    :rtype: str
+    """
+
     test_command_text = test_command or "unknown"
 
     return (
@@ -470,6 +672,14 @@ def _build_unavailable_prompt_summary(
 
 
 def _join_context_values(values: tuple[str, ...]) -> str:
+    """Join context values for display in a prompt summary.
+
+    :param values: Context values to join.
+    :type values: tuple[str, ...]
+    :return: Comma-separated values, or ``none detected`` when empty.
+    :rtype: str
+    """
+
     if not values:
         return "none detected"
 
@@ -477,6 +687,14 @@ def _join_context_values(values: tuple[str, ...]) -> str:
 
 
 def _check_clean_state(repo_root: Path) -> GitCommandResult:
+    """Run the Git status command used to detect dirty repositories.
+
+    :param repo_root: Git repository root to inspect.
+    :type repo_root: Path
+    :return: Normalized result from ``git status --porcelain``.
+    :rtype: GitCommandResult
+    """
+
     return _run_git_command(
         [
             "git",
@@ -489,6 +707,14 @@ def _check_clean_state(repo_root: Path) -> GitCommandResult:
 
 
 def _git_diagnostic_output(result: GitCommandResult) -> str:
+    """Choose the most useful diagnostic output from a Git result.
+
+    :param result: Git command result to inspect.
+    :type result: GitCommandResult
+    :return: ``stderr`` when present; otherwise ``stdout``.
+    :rtype: str
+    """
+
     return result.stderr.strip() or result.stdout.strip()
 
 
@@ -497,6 +723,18 @@ def _blocked_dirty_result(
     active_branch: str,
     status_output: str,
 ) -> RepositoryStartResult:
+    """Build a blocked startup result for a dirty repository.
+
+    :param repo_root: Detected Git repository root.
+    :type repo_root: Path
+    :param active_branch: Detected active branch name.
+    :type active_branch: str
+    :param status_output: Raw ``git status --porcelain`` output.
+    :type status_output: str
+    :return: Blocked startup result with ``repository_dirty`` reason.
+    :rtype: RepositoryStartResult
+    """
+
     message = (
         "Blocked: Repository has uncommitted changes. "
         f"Repository root: {repo_root}. "
@@ -523,6 +761,18 @@ def _blocked_clean_state_detection_result(
     active_branch: str,
     status_output: str,
 ) -> RepositoryStartResult:
+    """Build a blocked result when Git clean-state detection fails.
+
+    :param repo_root: Detected Git repository root.
+    :type repo_root: Path
+    :param active_branch: Detected active branch name.
+    :type active_branch: str
+    :param status_output: Git diagnostic output explaining the failure.
+    :type status_output: str
+    :return: Blocked startup result with ``clean_state_detection_failed`` reason.
+    :rtype: RepositoryStartResult
+    """
+
     message = (
         "Blocked: Repository clean-state detection failed. "
         f"Repository root: {repo_root}. "
@@ -545,6 +795,16 @@ def _blocked_clean_state_detection_result(
 
 
 def _blocked_branch_result(repo_root: Path, reason: str) -> RepositoryStartResult:
+    """Build a blocked startup result for active-branch detection failure.
+
+    :param repo_root: Detected Git repository root.
+    :type repo_root: Path
+    :param reason: Diagnostic reason from Git or repository validation.
+    :type reason: str
+    :return: Blocked startup result for missing active branch information.
+    :rtype: RepositoryStartResult
+    """
+
     message = f"Blocked: Could not detect an active Git branch from {repo_root}."
     logger.error("%s Reason: %s", message, reason.strip())
 
