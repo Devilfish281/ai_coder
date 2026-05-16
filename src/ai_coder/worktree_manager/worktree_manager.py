@@ -1,4 +1,31 @@
 # src/ai_coder/worktree_manager/worktree_manager.py
+"""Git worktree creation, naming, preservation, and cleanup helpers for RALPH.
+
+This module owns the WorktreeManager seam. It hides the Git command details
+behind small interface functions so the rest of RALPH can request a safe
+worktree without building command lists or interpreting Git cleanup failures.
+
+The public interface functions follow the project naming rule:
+
+``i_worktree_sanitize_branch_name()``
+    Convert arbitrary text into a Git- and Windows-safe slug.
+
+``i_worktree_branch_name()``
+    Build a stable branch name for one GitHub issue.
+
+``i_worktree_create_command()``
+    Build the Git command used to create a worktree.
+
+``i_worktree_create()``
+    Create a Git worktree and return a normalized result.
+
+``i_worktree_preserve()``
+    Decide whether unfinished or dirty work should be preserved.
+
+``i_worktree_cleanup()``
+    Remove only clean completed worktrees and preserve unsafe worktrees.
+"""
+
 from __future__ import annotations
 
 import re
@@ -20,6 +47,22 @@ DEFAULT_WORKTREE_TITLE_FALLBACK = "work"  #
 
 @dataclass(frozen=True)
 class WorktreeCreateResult:
+    """Describe the result of a Git worktree creation attempt.
+
+    :ivar repo_path: Repository path passed to Git.
+    :vartype repo_path: Path
+    :ivar worktree_path: Path where the worktree should exist.
+    :vartype worktree_path: Path
+    :ivar branch_name: Branch name created for the worktree.
+    :vartype branch_name: str
+    :ivar command: Git command used for the creation attempt.
+    :vartype command: tuple[str, ...]
+    :ivar created: Whether the worktree was created successfully.
+    :vartype created: bool
+    :ivar message: Human-readable success or failure message.
+    :vartype message: str
+    """
+
     repo_path: Path
     worktree_path: Path
     branch_name: str
@@ -30,12 +73,38 @@ class WorktreeCreateResult:
 
 @dataclass(frozen=True)
 class WorktreePreserveResult:
+    """Describe whether a worktree should be preserved.
+
+    :ivar preserved: Whether RALPH should preserve the worktree.
+    :vartype preserved: bool
+    :ivar reason: Human-readable reason for the preservation decision.
+    :vartype reason: str
+    """
+
     preserved: bool
     reason: str
 
 
 @dataclass(frozen=True)
 class WorktreeCleanupResult:
+    """Describe the result of a worktree cleanup attempt.
+
+    :ivar worktree_path: Worktree path that cleanup inspected or removed.
+    :vartype worktree_path: Path
+    :ivar removed: Whether cleanup removed the worktree.
+    :vartype removed: bool
+    :ivar preserved: Whether cleanup intentionally kept the worktree.
+    :vartype preserved: bool
+    :ivar reason: Stable reason code for the cleanup result.
+    :vartype reason: str
+    :ivar message: Human-readable cleanup message.
+    :vartype message: str
+    :ivar command: Git command used for cleanup or clean-state detection.
+    :vartype command: tuple[str, ...]
+    :ivar status_output: Git status or diagnostic output used for the decision.
+    :vartype status_output: str
+    """
+
     worktree_path: Path
     removed: bool
     preserved: bool
@@ -47,6 +116,20 @@ class WorktreeCleanupResult:
 
 @dataclass(frozen=True)
 class _GitWorktreeCommandResult:
+    """Normalize Git command output for WorktreeManager decisions.
+
+    :ivar stdout: Captured standard output from Git.
+    :vartype stdout: str
+    :ivar stderr: Captured standard error from Git.
+    :vartype stderr: str
+    :ivar exit_code: Process exit code returned by Git.
+    :vartype exit_code: int
+    :ivar error: Local execution error raised before Git completed.
+    :vartype error: str
+
+    :meta private:
+    """
+
     stdout: str
     stderr: str
     exit_code: int
@@ -54,10 +137,29 @@ class _GitWorktreeCommandResult:
 
     @property
     def succeeded(self) -> bool:
+        """Return whether the Git command succeeded.
+
+        :return: ``True`` when Git exited with code ``0`` and no local execution
+            error was recorded.
+        :rtype: bool
+        """
+
         return self.exit_code == 0 and not self.error
 
 
 def i_worktree_sanitize_branch_name(raw_name: str) -> str:
+    """Convert arbitrary text into a safe branch-name slug.
+
+    The sanitizer lowercases text, replaces non-alphanumeric groups with
+    hyphens, collapses repeated hyphens, and falls back to
+    :data:`DEFAULT_WORKTREE_TITLE_FALLBACK` when no safe characters remain.
+
+    :param raw_name: Raw branch title or prefix text.
+    :type raw_name: str
+    :return: Safe slug text for a branch or worktree path segment.
+    :rtype: str
+    """
+
     lowered_name = raw_name.strip().lower()
     safe_name = re.sub(r"[^a-z0-9]+", "-", lowered_name)
     safe_name = re.sub(r"-+", "-", safe_name)
@@ -71,6 +173,24 @@ def i_worktree_branch_name(
     issue_title: str,
     prefix: str = DEFAULT_WORKTREE_BRANCH_PREFIX,
 ) -> str:
+    """Build a safe RALPH branch name for one GitHub issue.
+
+    The branch name uses the format ``<prefix>-issue-<number>-<safe-title>`` and
+    is shortened to :data:`DEFAULT_WORKTREE_BRANCH_MAX_LENGTH` characters so it
+    stays friendlier to Windows path limits.
+
+    :param issue_number: GitHub issue number.
+    :type issue_number: int
+    :param issue_title: GitHub issue title used to build the branch slug.
+    :type issue_title: str
+    :param prefix: Optional branch prefix.
+    :type prefix: str
+    :return: Safe branch name for the worktree.
+    :rtype: str
+    :raises ValueError: If ``issue_number`` is less than ``1`` or the prefix is
+        too long for the configured branch limit.
+    """
+
     if issue_number < 1:  #
         raise ValueError("issue_number must be a positive integer.")  #
 
@@ -97,6 +217,21 @@ def i_worktree_create_command(
     worktree_path: str | Path,
     branch_name: str,
 ) -> list[str]:
+    """Build the Git command used to create a worktree.
+
+    This function only builds the command. It does not execute Git, which makes
+    the command construction easy to test.
+
+    :param repo_path: Path to the host Git repository.
+    :type repo_path: str | Path
+    :param worktree_path: Path where Git should create the worktree.
+    :type worktree_path: str | Path
+    :param branch_name: Branch name to create for the worktree.
+    :type branch_name: str
+    :return: Command list suitable for :func:`subprocess.run`.
+    :rtype: list[str]
+    """
+
     logger.info("START: i_worktree_create_command")
     logger.info("Preparing Git worktree creation command.")
     logger.info(f"Input repository path: {repo_path}")
@@ -121,6 +256,26 @@ def i_worktree_create(
     issue_title: str,
     worktree_root: str | Path | None = None,
 ) -> WorktreeCreateResult:
+    """Create a safe Git worktree for the selected issue.
+
+    The function creates a branch name from the issue, prepares the worktree
+    root directory, refuses to overwrite an existing worktree path, runs
+    ``git worktree add -b``, and returns a normalized result object instead of
+    raising for normal Git failures.
+
+    :param repo_path: Host repository path where Git should run.
+    :type repo_path: str | Path
+    :param issue_number: GitHub issue number used in the branch name.
+    :type issue_number: int
+    :param issue_title: GitHub issue title used in the branch name.
+    :type issue_title: str
+    :param worktree_root: Optional parent directory for RALPH worktrees. When
+        omitted, ``.ai_coder/ai_coder_worktrees`` under ``repo_path`` is used.
+    :type worktree_root: str | Path | None
+    :return: Worktree creation result.
+    :rtype: WorktreeCreateResult
+    """
+
     logger.info("START: i_worktree_create")
     logger.info("Preparing to create Git worktree for the selected issue.")
     logger.info(f"Input repository path: {repo_path}")
@@ -223,6 +378,20 @@ def i_worktree_preserve(
     completed: bool,
     has_uncommitted_changes: bool = False,
 ) -> WorktreePreserveResult:
+    """Decide whether a worktree should be preserved.
+
+    This is a small policy helper retained for the earlier tracer-bullet
+    interface. The deeper cleanup behavior lives in :func:`i_worktree_cleanup`.
+
+    :param completed: Whether the RALPH run completed.
+    :type completed: bool
+    :param has_uncommitted_changes: Whether uncommitted changes are known to
+        exist.
+    :type has_uncommitted_changes: bool
+    :return: Preservation decision result.
+    :rtype: WorktreePreserveResult
+    """
+
     logger.info("START: i_worktree_preserve")
 
     if has_uncommitted_changes:
@@ -257,6 +426,31 @@ def i_worktree_cleanup(
     completed: bool,
     has_uncommitted_changes: bool | None = None,
 ) -> WorktreeCleanupResult:
+    """Preserve unsafe worktrees and remove only clean completed worktrees.
+
+    Cleanup follows the safety-first RALPH rule:
+
+    * incomplete runs are preserved without running Git;
+    * known dirty worktrees are preserved without running Git;
+    * unknown worktree state is checked with ``git status --porcelain``;
+    * clean completed worktrees are removed with ``git worktree remove``;
+    * Git errors preserve the worktree and return diagnostics.
+
+    :param repo_path: Host repository path used for ``git worktree remove``.
+    :type repo_path: str | Path
+    :param worktree_path: Worktree path to inspect or remove.
+    :type worktree_path: str | Path
+    :param completed: Whether RALPH completed successfully enough to allow
+        cleanup.
+    :type completed: bool
+    :param has_uncommitted_changes: Optional known dirty-state flag. ``True``
+        preserves immediately, ``False`` skips status detection, and ``None``
+        asks Git to detect status.
+    :type has_uncommitted_changes: bool | None
+    :return: Cleanup result with preservation/removal details.
+    :rtype: WorktreeCleanupResult
+    """
+
     logger.info("START: i_worktree_cleanup")
 
     resolved_repo_path = Path(repo_path)
@@ -388,6 +582,16 @@ def i_worktree_cleanup(
 def _run_worktree_create_command(
     command: list[str],
 ) -> _GitWorktreeCommandResult:
+    """Run the Git command that creates a worktree.
+
+    :param command: Complete Git command list.
+    :type command: list[str]
+    :return: Normalized Git command result.
+    :rtype: _GitWorktreeCommandResult
+
+    :meta private:
+    """
+
     logger.info("Running Git worktree creation command: %s", command)
 
     try:
@@ -416,6 +620,16 @@ def _run_worktree_create_command(
 def _run_worktree_git_command(
     command: list[str],
 ) -> _GitWorktreeCommandResult:
+    """Run a Git command used by worktree cleanup.
+
+    :param command: Complete Git command list.
+    :type command: list[str]
+    :return: Normalized Git command result.
+    :rtype: _GitWorktreeCommandResult
+
+    :meta private:
+    """
+
     logger.info("Running Git worktree command: %s", command)
 
     try:
@@ -442,6 +656,16 @@ def _run_worktree_git_command(
 
 
 def _git_command_message(command_result: _GitWorktreeCommandResult) -> str:
+    """Choose the clearest diagnostic message from a Git command result.
+
+    :param command_result: Git command result to inspect.
+    :type command_result: _GitWorktreeCommandResult
+    :return: Local execution error, Git stderr/stdout, or fallback exit-code text.
+    :rtype: str
+
+    :meta private:
+    """
+
     if command_result.error:
         return command_result.error
 
