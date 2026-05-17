@@ -106,9 +106,14 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
         "number,title,body,labels,assignees",
     ]
 
+    # label
+    logger.info(f"Listing GitHub issues with label: {label}")
     if label and label.strip():
         command.extend(["--label", label.strip()])
+        logger.info(f"Added label filter to command: {label.strip()}")
 
+    logger.info("Running command to list GitHub issues...")
+    logger.debug(f"Command: {' '.join(command)}")
     completed_process = subprocess.run(
         command,
         capture_output=True,
@@ -122,7 +127,12 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
             f"{completed_process.stderr.strip()}"
         )
 
+    # raw_issues length
+    logger.info("Parsing GitHub issues from command output...")
+    logger.debug(f"Raw command output: {completed_process.stdout.strip()}")
+    logger.info("Successfully listed GitHub issues. Parsing JSON output...")
     raw_issues = json.loads(completed_process.stdout or "[]")
+    logger.info(f"Parsed {len(raw_issues)} GitHub issues.")
     return tuple(_github_issue_from_gh_json(raw_issue) for raw_issue in raw_issues)
 
 
