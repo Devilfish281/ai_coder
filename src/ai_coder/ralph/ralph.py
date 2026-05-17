@@ -765,12 +765,20 @@ def _resolve_issue_source(
 
     if setup_config.github_issue_path.exists():
         logger.info("Using GitHub issue from file.")
-        return (
-            i_github_issue_from_file(
+        try:
+            return (
+                i_github_issue_from_file(
+                    setup_config.github_issue_path,
+                    default_label=setup_config.label,
+                ),
+            )
+        except FileNotFoundError:
+            logger.warning(
+                "GitHub issue file was not found while reading %s. "
+                "Falling back to GitHub issues from the API.",
                 setup_config.github_issue_path,
-                default_label=setup_config.label,
-            ),
-        )
+                exc_info=True,
+            )
 
     logger.info("Using GitHub issues from the API.")
     return i_github_issue_list(label=setup_config.label)

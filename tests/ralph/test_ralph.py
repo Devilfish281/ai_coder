@@ -2202,6 +2202,88 @@ def test_ralph_loads_local_issue_file_when_no_issue_is_provided(
     assert "RALPH should load this issue from a local markdown file." in result.prompt
 
 
+def test_ralph_falls_back_to_github_api_when_issue_file_disappears(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from ai_coder.ralph import ralph as ralph_module
+    from ai_coder.setup_config import c_setup_config
+
+    issue_file = tmp_path / "github_issue.md"
+    issue_file.write_text(
+        "# Local issue that disappears\n\n"
+        "Labels: tracer bullet\n\n"
+        "This local issue file will fail during loading.",
+        encoding="utf-8",
+    )
+
+    api_issue = GitHubIssue(
+        number=28,
+        title="Use GitHub API fallback",
+        body="RALPH should fall back to GitHub when the local issue file is missing.",
+        labels=("tracer bullet",),
+    )
+
+    c_setup_config._instance = None
+    monkeypatch.setenv("TESTING_FLAG", "false")
+    monkeypatch.delenv("ISSUE_NUMBER", raising=False)
+    monkeypatch.delenv("ISSUE_TITLE", raising=False)
+    monkeypatch.delenv("ISSUE_BODY", raising=False)
+    monkeypatch.setenv("GITHUB_ISSUE_PATH", str(issue_file))
+    _refresh_ralph_config()
+
+    ralph_module.setup_config = c_setup_config.get_instance()
+    ralph_module.logger = ralph_module.setup_config.get_logger()
+
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    file_calls: list[tuple[object, str]] = []
+    api_calls: list[str | None] = []
+
+    def fake_github_issue_from_file(
+        issue_path,
+        default_label="tracer bullet",
+    ):
+        file_calls.append((issue_path, default_label))
+        raise FileNotFoundError(f"GitHub issue file does not exist: {issue_path}")
+
+    def fake_github_issue_list(label=None):
+        api_calls.append(label)
+        return (api_issue,)
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_github_issue_from_file",
+        fake_github_issue_from_file,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_github_issue_list",
+        fake_github_issue_list,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=None,
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.completed is True
+    assert result.status == "complete"
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 28
+    assert result.selected_issue.title == "Use GitHub API fallback"
+    assert "fall back to GitHub" in result.prompt
+    assert file_calls == [(issue_file, ralph_module.setup_config.label)]
+    assert api_calls == [ralph_module.setup_config.label]
+
+
 def test_ralph_incomplete_run_preserves_worktree_and_reports_path(
     monkeypatch,
     tmp_path,
