@@ -222,7 +222,7 @@ class c_setup_config(BaseModel):
 
     # LABEL="tracer bullet"
     label: str = Field(
-        default_factory=lambda: c_setup_config.get_env("LABEL", "tracer bullet"),
+        default_factory=lambda: c_setup_config.get_env("LABEL", ""),
         description="The label to use for the RALPH agent.",
     )
 
