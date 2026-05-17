@@ -115,10 +115,13 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
 
     logger.info("Running command to list GitHub issues...")
     logger.debug(f"Command: {' '.join(command)}")
+
     completed_process = subprocess.run(
         command,
         capture_output=True,
         text=True,
+        encoding="utf-8",  #  Added Code
+        errors="replace",  #  Added Code
         check=False,
     )
 
