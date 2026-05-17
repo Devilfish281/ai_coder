@@ -262,8 +262,21 @@ def test_github_issue_select_compatibility_wrapper_returns_selected_issue() -> N
 def test_github_issue_list_requests_assignees_once(monkeypatch) -> None:
     captured_command: list[str] = []
 
-    def fake_run(command, capture_output, text, check):
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
         captured_command.extend(command)
+        assert capture_output is True
+        assert text is True
+        assert encoding == "utf-8"
+        assert errors == "replace"
+        assert check is False
+
         return SimpleNamespace(
             returncode=0,
             stdout=(
@@ -288,11 +301,14 @@ def test_github_issue_list_requests_assignees_once(monkeypatch) -> None:
         "gh",
         "issue",
         "list",
+        "--repo",
+        github_issues_module.setup_config.github_repo,
         "--state",
         "open",
         "--json",
         "number,title,body,labels,assignees",
     ]
+
     assert issues == (
         GitHubIssue(
             number=20,
