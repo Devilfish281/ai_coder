@@ -100,13 +100,14 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
         "gh",
         "issue",
         "list",
+        "--repo",
+        setup_config.github_repo,
         "--state",
         "open",
         "--json",
         "number,title,body,labels,assignees",
     ]
 
-    # label
     logger.info(f"Listing GitHub issues with label: {label}")
     if label and label.strip():
         command.extend(["--label", label.strip()])
@@ -123,6 +124,9 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
 
     stdout_text = completed_process.stdout or ""
     stderr_text = completed_process.stderr or ""
+
+    logger.debug(f"GitHub issue list return code: {completed_process.returncode}")
+    logger.debug(f"GitHub issue list stderr: {stderr_text.strip()}")
 
     if completed_process.returncode != 0:
         raise RuntimeError(
