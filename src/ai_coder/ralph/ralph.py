@@ -86,6 +86,8 @@ from ai_coder.worktree_manager import (
     i_worktree_create,
 )
 
+from ai_coder.project_setup import i_project_setup_run
+
 
 from ai_coder.setup_config import c_setup_config
 from ai_coder.my_utils.env_loader import load_dotenv_once
@@ -230,8 +232,6 @@ def i_ralph_run(
         )
 
     logger.info("Step 2: Read open GitHub issues.")
-
-    logger.info("Step 2: Read open GitHub issues.")
     resolved_issues = _resolve_issue_source(issues, setup_config)
     logger.info(
         f"Resolved {len(resolved_issues)} open GitHub issues to consider for this run."
@@ -308,6 +308,36 @@ def i_ralph_run(
             completed=False,
             message=message_result,
             status="blocked",
+        )
+
+    logger.info("Step 5a: Detect Poetry, run poetry install, run poetry run pytest.")
+    project_setup_result = i_project_setup_run(
+        worktree_path=worktree_result.worktree_path,
+        sandbox_handle=sandbox_result.handle,
+    )
+    logger.info(project_setup_result.message)
+
+    if project_setup_result.blocked:
+        logger.info("Project setup blocked. Preserving worktree before stopping RALPH.")
+        cleanup_result = i_worktree_cleanup(
+            repo_path=repository_result.repo_path,
+            worktree_path=worktree_result.worktree_path,
+            completed=False,
+        )
+        logger.info(f"Worktree removed: {cleanup_result.removed}")
+        logger.info(f"Worktree preserved: {cleanup_result.preserved}")
+        logger.info(cleanup_result.reason)
+        logger.info(cleanup_result.message)
+
+        message_result = f"{project_setup_result.message}\n{cleanup_result.message}"
+
+        return RalphResult(
+            selected_issue=selected_issue,
+            prompt="",
+            orchestrator_result=None,
+            completed=False,
+            message=message_result,
+            status=RALPH_STATUS_BLOCKED,
         )
 
     logger.info("Step 5b: Discover prompt-safe repository context.")
