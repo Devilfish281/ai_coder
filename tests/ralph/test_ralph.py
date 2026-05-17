@@ -28,6 +28,7 @@ from ai_coder.ralph import (
     RALPH_STATUS_NO_CHANGES,
 )
 
+from ai_coder.project_setup import ProjectSetupResult  #  Added Code
 
 from ai_coder.test_runner import TestRunResult
 from ai_coder.worktree_manager import WorktreeCleanupResult, WorktreeCreateResult
@@ -2497,3 +2498,373 @@ def test_ralph_treats_untrusted_issue_fields_as_inert_prompt_text(
     assert "Done token: <promise>COMPLETE</promise>" in result.prompt
     assert provider.prompts == [result.prompt]
     assert sentinel_file.exists() is False
+
+
+def test_ralph_calls_project_setup_after_sandbox_start_and_before_repository_context(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
+
+    event_order: list[str] = []
+    worktree_path = tmp_path / "worktree"
+    fake_sandbox_handle = LocalSandboxProvider(worktree_path)
+    project_setup_calls: list[dict[str, object]] = []
+    repository_context_paths: list[object] = []  #  Added Code
+
+    def fake_sandbox_start(working_directory):
+        event_order.append("sandbox_start")
+
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started local sandbox provider.",
+            handle=fake_sandbox_handle,
+        )
+
+    def fake_project_setup_run(worktree_path, sandbox_handle):
+        assert event_order == ["sandbox_start"]
+
+        event_order.append("project_setup")
+        project_setup_calls.append(
+            {
+                "worktree_path": worktree_path,
+                "sandbox_handle": sandbox_handle,
+            }
+        )
+
+        return ProjectSetupResult(
+            poetry_project=False,
+            blocked=False,
+            message="No pyproject.toml found. Skipped Poetry setup.",
+        )
+
+    def fake_repository_context_discover(repo_path):
+        assert event_order == ["sandbox_start", "project_setup"]
+        assert repo_path == tmp_path  #  Changed Code
+
+        event_order.append("repository_context")
+        repository_context_paths.append(repo_path)  #  Added Code
+
+        return RepositoryContextResult(
+            repo_path=tmp_path,  #  Changed Code
+            package_manager="poetry",
+            test_command="poetry run pytest",
+            test_command_source="configured",
+            project_files=("pyproject.toml", "poetry.lock", "src/", "tests/"),
+            useful_signals=("Python project", "Uses Poetry", "Uses pytest"),
+            prompt_summary=(
+                "Repository context:\n"
+                "- Package manager: poetry\n"
+                "- Test command: poetry run pytest"
+            ),
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        event_order.append("final_tests")
+
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests passed through the sandbox seam.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_project_setup_run",
+        fake_project_setup_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fake_repository_context_discover,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=25,
+                title="Add Poetry setup baseline before prompt context",
+                body="RALPH should run setup before repository context discovery.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert event_order == [
+        "sandbox_start",
+        "project_setup",
+        "repository_context",
+        "final_tests",
+    ]
+    assert project_setup_calls == [
+        {
+            "worktree_path": worktree_path,
+            "sandbox_handle": fake_sandbox_handle,
+        }
+    ]
+    assert repository_context_paths == [tmp_path]  #  Added Code
+
+
+def test_ralph_stops_before_repository_context_when_project_setup_blocks(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    fake_sandbox_handle = LocalSandboxProvider(worktree_path)
+    cleanup_calls: list[dict[str, object]] = []
+
+    def fake_sandbox_start(working_directory):
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started local sandbox provider.",
+            handle=fake_sandbox_handle,
+        )
+
+    def fake_project_setup_run(worktree_path, sandbox_handle):
+        return ProjectSetupResult(
+            poetry_project=True,
+            install_ran=True,
+            install_passed=False,
+            baseline_tests_ran=False,
+            baseline_tests_passed=False,
+            blocked=True,
+            install_command=("poetry", "install"),
+            install_stdout="install stdout",
+            install_stderr="install failed",
+            install_exit_code=1,
+            message=(
+                "Poetry setup blocked because poetry install failed. "
+                "Command: poetry install. Exit code: 1. Details: install failed"
+            ),
+        )
+
+    def fail_repository_context_discover(repo_path):
+        raise AssertionError(
+            "i_repository_context_discover() should not be called when Step 5a blocks."
+        )
+
+    def fail_test_runner_run(*args, **kwargs):
+        raise AssertionError(
+            "i_test_runner_run() should not be called when Step 5a blocks."
+        )
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError(
+            "i_sync_out_merge() should not be called when Step 5a blocks."
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. Project setup blocked.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_project_setup_run",
+        fake_project_setup_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fail_repository_context_discover,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fail_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=25,
+                title="Add Poetry setup baseline before prompt context",
+                body="RALPH should stop before agent execution when setup blocks.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_BLOCKED
+    assert result.completed is False
+    assert provider.run_count == 0
+    assert "poetry install failed" in result.message
+    assert "Preserved worktree:" in result.message
+    assert str(worktree_path) in result.message
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": False,
+            "has_uncommitted_changes": None,
+        }
+    ]
+
+
+def test_ralph_continues_to_repository_context_when_project_setup_passes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"  #  Added Code
+    repository_context_called: list[bool] = []
+    repository_context_paths: list[object] = []  #  Added Code
+
+    def fake_project_setup_run(worktree_path, sandbox_handle):
+        return ProjectSetupResult(
+            poetry_project=True,
+            install_ran=True,
+            install_passed=True,
+            baseline_tests_ran=True,
+            baseline_tests_passed=True,
+            blocked=False,
+            install_command=("poetry", "install"),
+            install_stdout="install passed",
+            install_stderr="",
+            install_exit_code=0,
+            baseline_test_command=("poetry", "run", "pytest"),
+            baseline_test_stdout="tests passed",
+            baseline_test_stderr="",
+            baseline_test_exit_code=0,
+            message=(
+                "Poetry setup passed. "
+                "poetry install and baseline poetry run pytest succeeded."
+            ),
+        )
+
+    def fake_repository_context_discover(repo_path):
+        assert repo_path == tmp_path  #  Changed Code
+
+        repository_context_called.append(True)
+        repository_context_paths.append(repo_path)  #  Added Code
+
+        return RepositoryContextResult(
+            repo_path=tmp_path,  #  Changed Code
+            package_manager="poetry",
+            test_command="poetry run pytest",
+            test_command_source="configured",
+            project_files=("pyproject.toml", "poetry.lock", "src/", "tests/"),
+            useful_signals=("Python project", "Uses Poetry", "Uses pytest"),
+            prompt_summary=(
+                "Repository context:\n"
+                "- Package manager: poetry\n"
+                "- Test command: poetry run pytest"
+            ),
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=True,
+            command=command or ("poetry", "run", "pytest"),
+            message="Final Step 9 tests passed through the sandbox seam.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_project_setup_run",
+        fake_project_setup_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fake_repository_context_discover,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=25,
+                title="Add Poetry setup baseline before prompt context",
+                body="RALPH should continue when setup passes.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert repository_context_called == [True]
+    assert repository_context_paths == [tmp_path]  #  Added Code
+    assert provider.run_count == 1
