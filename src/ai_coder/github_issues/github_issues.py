@@ -121,17 +121,19 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
         check=False,
     )
 
+    stdout_text = completed_process.stdout or ""
+    stderr_text = completed_process.stderr or ""
+
     if completed_process.returncode != 0:
         raise RuntimeError(
-            "Failed to list GitHub issues with gh issue list: "
-            f"{completed_process.stderr.strip()}"
+            "Failed to list GitHub issues with gh issue list: " f"{stderr_text.strip()}"
         )
 
-    # raw_issues length
     logger.info("Parsing GitHub issues from command output...")
-    logger.debug(f"Raw command output: {completed_process.stdout.strip()}")
+    logger.debug(f"Raw command output: {stdout_text.strip()}")
     logger.info("Successfully listed GitHub issues. Parsing JSON output...")
-    raw_issues = json.loads(completed_process.stdout or "[]")
+    raw_issues = json.loads(stdout_text or "[]")
+
     logger.info(f"Parsed {len(raw_issues)} GitHub issues.")
     return tuple(_github_issue_from_gh_json(raw_issue) for raw_issue in raw_issues)
 
