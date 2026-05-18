@@ -17,7 +17,7 @@ from ai_coder.sandbox_provider import (
 
 
 from ai_coder.ralph import i_ralph_run
-
+from ai_coder.display import SilentDisplay
 
 from ai_coder.ralph import (
     RALPH_RESULT_STATUSES,
@@ -2950,3 +2950,269 @@ def test_ralph_continues_to_repository_context_when_project_setup_passes(
     assert repository_context_called == [True]
     assert repository_context_paths == [tmp_path]  #  Added Code
     assert provider.run_count == 1
+
+
+def _display_messages_as_text(display: SilentDisplay) -> str:
+    return "\n".join(display.messages)
+
+
+def test_ralph_displays_major_phases_on_success(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    display = SilentDisplay()
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=25,
+                title="Add display and logging phases",
+                body="RALPH should display readable progress phases.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == "complete"
+    assert "Phase: setup" in display_text
+    assert "Phase: worktree" in display_text
+    assert "Phase: sandbox" in display_text
+    assert "Phase: prompt" in display_text
+    assert "Phase: agent" in display_text
+    assert "Phase: tests" in display_text
+    assert "Phase: commit" in display_text
+    assert "Phase: cleanup" in display_text
+    assert "Selected issue #25: Add display and logging phases" in display_text
+    assert "Tests passed." in display_text
+    assert "Commit created: test-commit-hash" in display_text
+
+
+def test_ralph_displays_failed_test_diagnostics_and_preserved_worktree(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    display = SilentDisplay()
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=False,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests failed through the sandbox seam.",
+            stdout="test stdout",
+            stderr="pytest failed",
+            exit_code=1,
+        )
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError("i_sync_out_merge() should not be called when tests fail.")
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. Tests failed.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=25,
+                title="Add display and logging phases",
+                body="RALPH should display failed test diagnostics.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == "failed"
+    assert "Phase: tests" in display_text
+    assert "Tests failed." in display_text
+    assert "Exit code: 1" in display_text
+    assert "Stdout: test stdout" in display_text
+    assert "Stderr: pytest failed" in display_text
+    assert f"Preserved worktree: {worktree_path}" in display_text
+
+
+def test_ralph_displays_commit_hash_after_success(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+
+    display = SilentDisplay()
+    commit_hash = "displaycommit123"
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        return SyncMergeResult(
+            merged=True,
+            committed=True,
+            failed=False,
+            commit_hash=commit_hash,
+            worktree_path=worktree_path,
+            has_changes=True,
+            has_uncommitted_changes=False,
+            message=f"Commit created: {commit_hash}.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=25,
+                title="Add display and logging phases",
+                body="RALPH should display successful commit hashes.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == "complete"
+    assert f"Commit created: {commit_hash}" in display_text
+
+
+def test_ralph_displays_preserved_worktree_path_when_cleanup_preserves_work(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+
+    display = SilentDisplay()
+    worktree_path = tmp_path / "worktree"
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        return SyncMergeResult(
+            merged=True,
+            committed=True,
+            failed=False,
+            commit_hash="dirtydisplay123",
+            worktree_path=worktree_path,
+            has_changes=True,
+            has_uncommitted_changes=True,
+            status_output=" M src/generated_after_commit.py",
+            message=(
+                "Commit created: dirtydisplay123. "
+                "Worktree still has uncommitted changes after commit."
+            ),
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="worktree_dirty",
+            message=f"Preserved worktree: {worktree_path}. Git detected uncommitted changes.",
+            status_output=" M src/generated_after_commit.py",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=25,
+                title="Add display and logging phases",
+                body="RALPH should display preserved dirty worktree paths.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == "complete"
+    assert f"Preserved worktree: {worktree_path}" in display_text

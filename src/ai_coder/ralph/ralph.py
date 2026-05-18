@@ -50,6 +50,18 @@ from pathlib import Path
 
 from typing import Any, Iterable
 
+from ai_coder.display import (
+    DisplayProtocol,
+    SilentDisplay,
+    i_display_cleanup_result,
+    i_display_command_failure,
+    i_display_commit_result,
+    i_display_phase,
+    i_display_selected_issue,
+    i_display_test_result,
+)
+
+
 from ai_coder.agent_provider import (
     AgentProvider,
     COMPLETE_TOKEN,
@@ -86,7 +98,10 @@ from ai_coder.worktree_manager import (
     i_worktree_create,
 )
 
-from ai_coder.project_setup import i_project_setup_run
+from ai_coder.project_setup import (
+    ProjectSetupResult,
+    i_project_setup_run,
+)
 
 
 from ai_coder.setup_config import c_setup_config
@@ -175,6 +190,7 @@ def i_ralph_run(
     prompt_path: str | Path | None = None,
     repo_path: str | Path | None = None,
     allow_no_changes: bool = False,
+    display: DisplayProtocol | None = None,
 ) -> RalphResult:
     """
     Run one end-to-end RALPH tracer-bullet workflow.
@@ -204,18 +220,26 @@ def i_ralph_run(
     :param allow_no_changes: Treat a completed, passing run with no detected code
         changes as complete instead of ``no_changes``.
     :type allow_no_changes: bool
+    :param display: Optional display adapter. When omitted, RALPH uses
+        ``SilentDisplay`` so tests and callers do not get noisy output.
+    :type display: DisplayProtocol | None
     :return: Final workflow result.
     :rtype: RalphResult
     """
 
     logger.info("Starting RALPH run...")
+    active_display = display if display is not None else SilentDisplay()
 
+    #############################################
     # 1. Start with a Git repository.
     logger.info("Step 1: Start with a Git repository.")
+    active_display.i_display_message("Step 1: Start with a Git repository.")
+    i_display_phase(active_display, "setup")
 
     repository_result = i_repository_start(repo_path or setup_config.repo_path)
 
     logger.info(repository_result.message)
+    active_display.i_display_message(repository_result.message)
 
     if not repository_result.ready:
         logger.info(
@@ -231,7 +255,11 @@ def i_ralph_run(
             status="blocked",
         )
 
+    #############################################
+    # 2. Read open GitHub issues.
     logger.info("Step 2: Read open GitHub issues.")
+    active_display.i_display_message("Step 2: Read open GitHub issues.")
+
     resolved_issues = _resolve_issue_source(issues, setup_config)
     logger.info(
         f"Resolved {len(resolved_issues)} open GitHub issues to consider for this run."
@@ -240,14 +268,19 @@ def i_ralph_run(
     logger.info(f"Issue titles: {[issue.title for issue in resolved_issues]}")
     logger.info(f"Issue labels: {[issue.labels for issue in resolved_issues]}")
     logger.info(f"Issue states: {[issue.state for issue in resolved_issues]}")
-    logger.info(f"Issue bodies: {[issue.body for issue in resolved_issues]}")
+    # logger.info(f"Issue bodies: {[issue.body for issue in resolved_issues]}")
+    logger.info(f"Issue body lengths: {[len(issue.body) for issue in resolved_issues]}")
     logger.info(f"Issue blocked_by: {[issue.blocked_by for issue in resolved_issues]}")
 
+    #############################################
     # 3. Pick one actionable issue.
     logger.info("Step 3: Pick one actionable issue.")
+    active_display.i_display_message("Step 3: Pick one actionable issue.")
+
     selected_issue = i_github_issue_select(resolved_issues)
 
     if selected_issue is None:
+        active_display.i_display_message("No open actionable issue selected.")
         return RalphResult(
             selected_issue=None,
             prompt="",
@@ -258,18 +291,31 @@ def i_ralph_run(
         )
 
     logger.info(f"Selected issue #{selected_issue.number}: {selected_issue.title}")
+    i_display_selected_issue(
+        active_display,
+        issue_number=selected_issue.number,
+        issue_title=selected_issue.title,
+    )
 
+    #############################################
     # 4. Create a safe working copy using a Git worktree.
     logger.info("Step 4: Create a safe working copy using a Git worktree.")
+    active_display.i_display_message(
+        "Step 4: Create a safe working copy using a Git worktree."
+    )
+    i_display_phase(active_display, "worktree")
+
     worktree_result = i_worktree_create(
         repo_path=repository_result.repo_path,
         issue_number=selected_issue.number,
         issue_title=selected_issue.title,
     )
     logger.info(worktree_result.message)
+    active_display.i_display_message(worktree_result.message)
 
     if not worktree_result.created:
         logger.info("Worktree creation failed. RALPH will stop before sandbox startup.")
+        active_display.i_display_message("RALPH blocked before sandbox startup.")
         return RalphResult(
             selected_issue=selected_issue,
             prompt="",
@@ -279,16 +325,23 @@ def i_ralph_run(
             status="blocked",
         )
 
+    #############################################
     # 5. Start a sandbox or local execution environment.
-
     logger.info("Step 5: Start a sandbox or local execution environment.")
+    active_display.i_display_message(
+        "Step 5: Start a sandbox or local execution environment."
+    )
+    i_display_phase(active_display, "sandbox")
+
     sandbox_result = i_sandbox_start(worktree_result.worktree_path)
     logger.info(sandbox_result.message)
+    active_display.i_display_message(sandbox_result.message)
 
     if not sandbox_result.started:
         logger.info(
             "Sandbox startup failed. Preserving worktree before stopping RALPH."
         )
+        i_display_phase(active_display, "cleanup")
         cleanup_result = i_worktree_cleanup(
             repo_path=repository_result.repo_path,
             worktree_path=worktree_result.worktree_path,
@@ -298,7 +351,13 @@ def i_ralph_run(
         logger.info(f"Worktree preserved: {cleanup_result.preserved}")
         logger.info(cleanup_result.reason)
         logger.info(cleanup_result.message)
-
+        i_display_cleanup_result(
+            active_display,
+            removed=cleanup_result.removed,
+            preserved=cleanup_result.preserved,
+            worktree_path=cleanup_result.worktree_path,
+            message=cleanup_result.message,
+        )
         message_result = f"{sandbox_result.message}\n{cleanup_result.message}"
 
         return RalphResult(
@@ -310,15 +369,24 @@ def i_ralph_run(
             status="blocked",
         )
 
+    #############################################
+    # 5a. Detect Poetry, run poetry install, run poetry run pytest.
     logger.info("Step 5a: Detect Poetry, run poetry install, run poetry run pytest.")
+    active_display.i_display_message(
+        "Step 5a: Detect Poetry, run poetry install, run poetry run pytest."
+    )
+
     project_setup_result = i_project_setup_run(
         worktree_path=worktree_result.worktree_path,
         sandbox_handle=sandbox_result.handle,
     )
     logger.info(project_setup_result.message)
+    active_display.i_display_message(project_setup_result.message)
 
     if project_setup_result.blocked:
         logger.info("Project setup blocked. Preserving worktree before stopping RALPH.")
+        _display_project_setup_failure(active_display, project_setup_result)
+        i_display_phase(active_display, "cleanup")
         cleanup_result = i_worktree_cleanup(
             repo_path=repository_result.repo_path,
             worktree_path=worktree_result.worktree_path,
@@ -328,6 +396,13 @@ def i_ralph_run(
         logger.info(f"Worktree preserved: {cleanup_result.preserved}")
         logger.info(cleanup_result.reason)
         logger.info(cleanup_result.message)
+        i_display_cleanup_result(
+            active_display,
+            removed=cleanup_result.removed,
+            preserved=cleanup_result.preserved,
+            worktree_path=cleanup_result.worktree_path,
+            message=cleanup_result.message,
+        )
 
         message_result = f"{project_setup_result.message}\n{cleanup_result.message}"
 
@@ -339,29 +414,56 @@ def i_ralph_run(
             message=message_result,
             status=RALPH_STATUS_BLOCKED,
         )
-
+    #############################################
+    # 5b. Discover prompt-safe repository context.
     logger.info("Step 5b: Discover prompt-safe repository context.")
+    active_display.i_display_message(
+        "Step 5b: Discover prompt-safe repository context."
+    )
+
     repository_context_result = i_repository_context_discover(
         repository_result.repo_path
     )
 
     logger.info(repository_context_result.prompt_summary)
 
+    #############################################
     # 6. Give an AI coding agent a prompt.
     logger.info("Step 6: Give an AI coding agent a prompt.")
-
+    active_display.i_display_message("Step 6: Give an AI coding agent a prompt.")
+    i_display_phase(active_display, "prompt")
+    #############################################
     # 6a. Resolve prompt text from file or inline prompt.
     logger.info("Step 6a: Resolve prompt text from file or inline prompt.")
+    active_display.i_display_message(
+        "Step 6a: Resolve prompt text from file or inline prompt."
+    )
+
     raw_prompt_template = _resolve_prompt_text(
         prompt_template=prompt_template,
         prompt_path=prompt_path,
     )
+    logger.info("Resolved prompt template length: %d", len(raw_prompt_template))
+    active_display.i_display_message("Prompt resolved.")
+    active_display.i_display_message(
+        f"Prompt template length: {len(raw_prompt_template)}"
+    )
 
+    #############################################
     # 6b. Preprocess prompt after sandbox is ready.
     logger.info("Step 6b: Preprocess prompt after sandbox is ready.")
-    logger.info(f"Raw prompt template before preprocessing:\n{raw_prompt_template}")
+    active_display.i_display_message(
+        "Step 6b: Preprocess prompt after sandbox is ready."
+    )
+
+    # logger.info(f"Raw prompt template before preprocessing:\n{raw_prompt_template}")
     logger.info(
-        f"Selected issue for prompt preprocessing: #{selected_issue.number} - {selected_issue.title}"
+        "Raw prompt template length before preprocessing: %d", len(raw_prompt_template)
+    )
+
+    logger.info(
+        "Selected issue for prompt preprocessing: %s",
+        f"#{selected_issue.number} - {selected_issue.title}",
     )
 
     prompt = _preprocess_prompt_after_sandbox_ready(
@@ -372,17 +474,28 @@ def i_ralph_run(
         worktree_path=worktree_result.worktree_path,
     )
 
-    logger.info(f"Final prompt after preprocessing:\n{prompt}")
+    # logger.info(f"Final prompt after preprocessing:\n{prompt}")
+    logger.info("Final prompt length after preprocessing: %d", len(prompt))
+    active_display.i_display_message(f"Final prompt length: {len(prompt)}")
 
     selected_agent_provider = _build_default_agent_provider(
         agent_provider=agent_provider,
         sandbox_handle=sandbox_result.handle,
     )
 
+    i_display_phase(active_display, "agent")
     logger.info(f"Using agent provider: {selected_agent_provider.__class__.__name__}")
+    active_display.i_display_message(
+        f"Agent provider: {selected_agent_provider.__class__.__name__}"
+    )
 
+    #############################################
     # 7. Let the agent edit files, run commands, and commit changes.
     logger.info("Step 7: Let the agent edit files, run commands, and commit changes.")
+    active_display.i_display_message(
+        "Step 7: Let the agent edit files, run commands, and commit changes."
+    )
+
     orchestrator_result = i_orchestrator_run(
         selected_agent_provider,
         prompt,
@@ -395,24 +508,49 @@ def i_ralph_run(
         orchestrator_result.iterations,
         orchestrator_result.error,
     )
-    logger.info("Final agent output: %s", orchestrator_result.final_output)
-    logger.info("All agent outputs: %s", orchestrator_result.outputs)
+    # logger.info("Final agent output: %s", orchestrator_result.final_output)
+    # logger.info("All agent outputs: %s", orchestrator_result.outputs)
+    logger.info(
+        "Final agent output summary: %s",
+        _short_display_text(orchestrator_result.final_output),
+    )
+    logger.info(
+        "Agent output count: %d",
+        len(orchestrator_result.outputs),
+    )
+
     logger.info(
         "Agent provider used: %s",
         selected_agent_provider.__class__.__name__,
     )
+    active_display.i_display_message(
+        f"Agent completed: {orchestrator_result.completed}"
+    )
+    active_display.i_display_message(
+        f"Agent final output: {_short_display_text(orchestrator_result.final_output)}"
+    )
     # logger.info(f"Prompt given to agent: {prompt}")
 
+    #############################################
     # 8. Detect whether the task is complete.
     logger.info("Step 8: Detect whether the task is complete.")
+    active_display.i_display_message("Step 8: Detect whether the task is complete.")
     completion_result = i_completion_detector_detect(orchestrator_result.final_output)
 
     logger.info(completion_result.message)
+    active_display.i_display_message(completion_result.message)
 
+    #############################################
     # 9. Run tests.
-
     logger.info("Step 9: Run tests.")
+    active_display.i_display_message("Step 9: Run tests.")
+    i_display_phase(active_display, "tests")
+
     test_command = _build_test_command_tuple(repository_context_result.test_command)
+    active_display.i_display_message(
+        f"Test command: {_format_command_for_display(test_command)}"
+    )
+
     test_result = i_test_runner_run(
         sandbox_handle=sandbox_result.handle,
         command=test_command,
@@ -424,9 +562,20 @@ def i_ralph_run(
     logger.info(f"Test stderr: {test_result.stderr}")
 
     logger.info(test_result.message)
-
+    i_display_test_result(
+        active_display,
+        passed=test_result.passed,
+        stdout=test_result.stdout,
+        stderr=test_result.stderr,
+        exit_code=test_result.exit_code,
+    )
+    #############################################
     # 10. Sync or merge the finished work back to the host repo.
     logger.info("Step 10: Sync or merge the finished work back to the host repo.")
+    active_display.i_display_message(
+        "Step 10: Sync or merge the finished work back to the host repo."
+    )
+    i_display_phase(active_display, "commit")
 
     should_commit = (
         orchestrator_result.completed
@@ -455,11 +604,17 @@ def i_ralph_run(
         )
 
     logger.info(sync_result.message)
+    _display_sync_result(active_display, sync_result)
 
+    #############################################
     # 11. Close the GitHub issue only after tests pass and the fix is committed.
     logger.info(
         "Step 11: Close the GitHub issue only after tests pass and the fix is committed."
     )
+    active_display.i_display_message(
+        "Step 11: Close the GitHub issue only after tests pass and the fix is committed."
+    )
+
     close_result = i_github_issue_close(
         issue=selected_issue,
         tests_passed=test_result.passed,
@@ -471,8 +626,13 @@ def i_ralph_run(
     )
     logger.info(close_result.message)
 
+    #############################################
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
     logger.info("Step 12: Preserve or clean up the worktree based on final run state.")
+    active_display.i_display_message(
+        "Step 12: Preserve or clean up the worktree based on final run state."
+    )
+    i_display_phase(active_display, "cleanup")
 
     cleanup_completed = (
         orchestrator_result.completed
@@ -495,6 +655,13 @@ def i_ralph_run(
     logger.info(f"Worktree preserved: {cleanup_result.preserved}")
     logger.info(cleanup_result.reason)
     logger.info(cleanup_result.message)
+    i_display_cleanup_result(
+        active_display,
+        removed=cleanup_result.removed,
+        preserved=cleanup_result.preserved,
+        worktree_path=cleanup_result.worktree_path,
+        message=cleanup_result.message,
+    )
 
     code_changes_detected = _code_changes_detected_from_cleanup(cleanup_result)
 
@@ -569,6 +736,125 @@ def _build_default_agent_provider(
         raise ValueError("sandbox_handle is required for the default fake test agent.")
 
     return FakeTestAgentProvider(sandbox_handle)
+
+
+def _display_project_setup_failure(
+    display: DisplayProtocol,
+    project_setup_result: ProjectSetupResult,
+) -> None:
+    """
+    Display command diagnostics when project setup blocks RALPH.
+
+    :param display: Display adapter for user-facing progress output.
+    :type display: DisplayProtocol
+    :param project_setup_result: Project setup result to inspect.
+    :type project_setup_result: ProjectSetupResult
+    :return: None.
+    :rtype: None
+
+    :meta private:
+    """
+
+    if project_setup_result.install_ran and not project_setup_result.install_passed:
+        i_display_command_failure(
+            display,
+            stdout=project_setup_result.install_stdout,
+            stderr=project_setup_result.install_stderr,
+            exit_code=project_setup_result.install_exit_code,
+        )
+        return
+
+    if (
+        project_setup_result.baseline_tests_ran
+        and not project_setup_result.baseline_tests_passed
+    ):
+        i_display_command_failure(
+            display,
+            stdout=project_setup_result.baseline_test_stdout,
+            stderr=project_setup_result.baseline_test_stderr,
+            exit_code=project_setup_result.baseline_test_exit_code,
+        )
+
+
+def _display_sync_result(
+    display: DisplayProtocol,
+    sync_result: SyncMergeResult,
+) -> None:
+    """
+    Display commit or sync result details.
+
+    :param display: Display adapter for user-facing progress output.
+    :type display: DisplayProtocol
+    :param sync_result: Sync/commit result to display.
+    :type sync_result: SyncMergeResult
+    :return: None.
+    :rtype: None
+
+    :meta private:
+    """
+
+    if sync_result.failed:
+        display.i_display_message(sync_result.message)
+        i_display_command_failure(
+            display,
+            stdout=sync_result.stdout,
+            stderr=sync_result.stderr,
+            exit_code=sync_result.exit_code,
+        )
+        return
+
+    i_display_commit_result(
+        display,
+        committed=sync_result.committed,
+        commit_hash=sync_result.commit_hash,
+        message=sync_result.message,
+    )
+
+
+def _format_command_for_display(command: tuple[str, ...]) -> str:
+    """
+    Format a command tuple for display output.
+
+    :param command: Command tuple to format.
+    :type command: tuple[str, ...]
+    :return: Readable command string.
+    :rtype: str
+
+    :meta private:
+    """
+
+    if not command:
+        return "<missing>"
+
+    return " ".join(command)
+
+
+def _short_display_text(
+    output_text: str,
+    max_length: int = 300,
+) -> str:
+    """
+    Return a short one-line output summary for display.
+
+    :param output_text: Text to summarize.
+    :type output_text: str
+    :param max_length: Maximum display length before truncation.
+    :type max_length: int
+    :return: Short display-safe text.
+    :rtype: str
+
+    :meta private:
+    """
+
+    cleaned_output_text = " ".join(output_text.split())
+
+    if not cleaned_output_text:
+        return "<empty>"
+
+    if len(cleaned_output_text) <= max_length:
+        return cleaned_output_text
+
+    return f"{cleaned_output_text[: max_length - 3]}..."
 
 
 def _build_test_command_tuple(test_command: str) -> tuple[str, ...]:
