@@ -1,4 +1,4 @@
-# my_utils/logger_setup.py
+# src/ai_coder/my_utils/logger_setup.py
 # Add other file to use the logger
 # import logging
 # logger = logging.getLogger(__name__)  # Reuse the global logger
@@ -17,8 +17,10 @@ import os
 import queue
 import sys
 import threading
+from collections.abc import Iterable
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
+
 
 from ai_coder.my_utils.env_loader import load_dotenv_once
 
@@ -183,6 +185,71 @@ def validate_config(config):
     # Verifies that config["log_dir"] is a valid, existing directory.
     if not os.path.isdir(config["log_dir"]):
         raise ValueError(f"log_dir must be a valid directory: {config['log_dir']}")
+
+
+class SecretRedactionFilter(logging.Filter):
+    """Redact configured secret values from log records."""
+
+    def __init__(self, secret_values: Iterable[object] = ()) -> None:
+        super().__init__()
+        self.secret_values = _clean_secret_values(secret_values)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _redact_log_text(record.msg, self.secret_values)
+        record.args = _redact_log_args(record.args, self.secret_values)
+        return True
+
+
+def _clean_secret_values(
+    secret_values: Iterable[object],
+) -> tuple[str, ...]:  #  Added Code
+    cleaned_values: list[str] = []  #  Added Code
+
+    for secret_value in secret_values:  #  Added Code
+        cleaned_value = str(secret_value).strip()  #  Added Code
+
+        if cleaned_value:  #  Added Code
+            cleaned_values.append(cleaned_value)  #  Added Code
+
+    return tuple(cleaned_values)  #  Added Code
+
+
+def _redact_log_text(  #  Added Code
+    text: object,  #  Added Code
+    secret_values: tuple[str, ...],  #  Added Code
+) -> str:  #  Added Code
+    redacted_text = str(text)  #  Added Code
+
+    for secret_value in secret_values:  #  Added Code
+        redacted_text = redacted_text.replace(secret_value, "<redacted>")  #  Added Code
+
+    return redacted_text  #  Added Code
+
+
+def _redact_log_args(  #  Added Code
+    args: object,  #  Added Code
+    secret_values: tuple[str, ...],  #  Added Code
+) -> object:  #  Added Code
+    if isinstance(args, tuple):  #  Added Code
+        return tuple(_redact_log_arg(arg, secret_values) for arg in args)  #  Added Code
+
+    if isinstance(args, dict):  #  Added Code
+        return {  #  Added Code
+            key: _redact_log_arg(value, secret_values)  #  Added Code
+            for key, value in args.items()  #  Added Code
+        }  #  Added Code
+
+    return args  #  Added Code
+
+
+def _redact_log_arg(  #  Added Code
+    arg: object,  #  Added Code
+    secret_values: tuple[str, ...],  #  Added Code
+) -> object:  #  Added Code
+    if isinstance(arg, str):  #  Added Code
+        return _redact_log_text(arg, secret_values)  #  Added Code
+
+    return arg  #  Added Code
 
 
 class AsyncRotatingFileHandler(RotatingFileHandler):
@@ -491,7 +558,12 @@ class AsyncRotatingFileHandler(RotatingFileHandler):
             self._debug("AsyncRotatingFileHandler closed")  # Debug statement
 
 
-def setup_logger(logger_name=None, config_file=None, debug_messages=False):
+def setup_logger(  #  Changed Code
+    logger_name=None,  #  Added Code
+    config_file=None,  #  Added Code
+    debug_messages=False,  #  Added Code
+    secret_values: Iterable[object] = (),  #  Added Code
+):  #  Added Code
     """
     Set up a named logger with asynchronous file logging and dynamic configuration.
 
@@ -501,6 +573,8 @@ def setup_logger(logger_name=None, config_file=None, debug_messages=False):
     :type config_file: str, optional
     :param debug_messages: Enable debug messages during logger setup.
     :type debug_messages: bool
+    :param secret_values: Configured secret values to redact from handler output.
+    :type secret_values: Iterable[object]
 
     :return: A configured logger instance.
     :rtype: logging.Logger
@@ -550,6 +624,8 @@ def setup_logger(logger_name=None, config_file=None, debug_messages=False):
     # Prevents log messages from propagating to parent loggers.
     logger.propagate = False
 
+    redaction_filter = SecretRedactionFilter(secret_values)  #  Added Code
+
     existing_handlers = list(logger.handlers)
 
     # Clear existing handlers to avoid duplicates
@@ -590,6 +666,7 @@ def setup_logger(logger_name=None, config_file=None, debug_messages=False):
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         console_handler.setLevel(getattr(logging, config["log_level"], logging.INFO))
+        console_handler.addFilter(redaction_filter)  #  Added Code
         console_handler._test_browser_mcp_handler = True
         console_handler._test_browser_mcp_handler_type = "console"
 
@@ -618,6 +695,7 @@ def setup_logger(logger_name=None, config_file=None, debug_messages=False):
                     "%(asctime)s %(levelname)s %(name)s:%(lineno)d [%(threadName)s] %(message)s"
                 )
             )
+            file_handler.addFilter(redaction_filter)  #  Added Code
             file_handler._test_browser_mcp_handler = True
             file_handler._test_browser_mcp_handler_type = "file"
             logger.addHandler(file_handler)

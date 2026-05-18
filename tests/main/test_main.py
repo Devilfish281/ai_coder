@@ -256,6 +256,8 @@ def test_main_custom_issue_text_stays_inert(capsys, monkeypatch, tmp_path) -> No
     monkeypatch.setenv("TESTING_FLAG", "true")
     _refresh_main_config()
 
+    issue_body = "Body !`echo unsafe` {{ISSUE_TITLE}}"
+
     exit_code = main_module.main(
         [
             "--issue-number",
@@ -263,7 +265,7 @@ def test_main_custom_issue_text_stays_inert(capsys, monkeypatch, tmp_path) -> No
             "--issue-title",
             "Fix !`echo title`",
             "--issue-body",
-            "Body !`echo unsafe` {{ISSUE_TITLE}}",
+            issue_body,
             "--label",
             "bug",
         ]
@@ -273,7 +275,9 @@ def test_main_custom_issue_text_stays_inert(capsys, monkeypatch, tmp_path) -> No
 
     assert exit_code == 0
     assert "Selected issue #14: Fix !`echo title`" in captured.out
-    assert "Body !`echo unsafe` {{ISSUE_TITLE}}" in captured.out
+    assert "RALPH final prompt length:" in captured.out
+    assert "RALPH final prompt:" not in captured.out
+    assert issue_body not in captured.out  #  Changed Code
     assert "RALPH completed the selected issue." in captured.out
 
 
@@ -473,3 +477,80 @@ def test_main_cli_repo_path_override_can_fix_bad_env_repo_path(
     assert exit_code == 0
     assert "Selected issue #1: Minimal local RALPH loop" in captured.out
     assert main_module.setup_config.repo_path == tmp_path
+
+
+def test_main_does_not_dump_full_prompt_body(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    _clear_main_test_env(monkeypatch)
+    monkeypatch.setenv("TESTING_FLAG", "true")
+    _refresh_main_config()
+
+    unique_prompt_body_text = "UNIQUE-LONG-PROMPT-BODY-026 should not be printed. " * 20
+
+    exit_code = main_module.main(
+        [
+            "--issue-number",
+            "26",
+            "--issue-title",
+            "Add configured secret redaction",
+            "--issue-body",
+            unique_prompt_body_text,
+            "--label",
+            "bug",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "RALPH final prompt length:" in captured.out
+    assert "RALPH final prompt:" not in captured.out
+    assert unique_prompt_body_text not in captured.out
+    assert "UNIQUE-LONG-PROMPT-BODY-026" not in captured.out
+
+
+def test_main_redacts_configured_secret_value_from_user_output(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    _clear_main_test_env(monkeypatch)
+    monkeypatch.setenv("TESTING_FLAG", "true")
+    monkeypatch.setenv("RALPH_TEST_SECRET_026", "super-secret-value-026")
+    _refresh_main_config()
+    main_module.setup_config.docker_secret_env_allowlist = ("RALPH_TEST_SECRET_026",)
+
+    exit_code = main_module.main(
+        [
+            "--issue-number",
+            "26",
+            "--issue-title",
+            "Fix super-secret-value-026 leak",
+            "--issue-body",
+            "Body contains super-secret-value-026.",
+            "--label",
+            "bug",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "super-secret-value-026" not in captured.out
+    assert "<redacted>" in captured.out
+    assert "Selected issue #26: Fix <redacted> leak" in captured.out

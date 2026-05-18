@@ -1,9 +1,11 @@
 # src/ai_coder/display/display.py
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Protocol
 
 _EMPTY_OUTPUT_TEXT = "<empty>"
+_REDACTED_SECRET_TEXT = "<redacted>"
 
 
 class DisplayProtocol(Protocol):
@@ -20,8 +22,31 @@ class SilentDisplay:
 
 
 class ConsoleDisplay:
+    def __init__(self, secret_values: Iterable[object] = ()) -> None:
+        self.secret_values = tuple(secret_values)
+
     def i_display_message(self, message: str) -> None:
-        print(message)
+        print(i_display_redact_text(message, self.secret_values))  #  Changed Code
+
+
+def i_display_redact_text(
+    text: object,
+    secret_values: Iterable[object],
+) -> str:
+    redacted_text = str(text)
+
+    for secret_value in secret_values:
+        secret_text = str(secret_value).strip()
+
+        if not secret_text:
+            continue
+
+        redacted_text = redacted_text.replace(
+            secret_text,
+            _REDACTED_SECRET_TEXT,
+        )
+
+    return redacted_text
 
 
 def i_display_phase(display: DisplayProtocol, phase_name: str) -> None:

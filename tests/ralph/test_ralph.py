@@ -28,7 +28,7 @@ from ai_coder.ralph import (
     RALPH_STATUS_NO_CHANGES,
 )
 
-from ai_coder.project_setup import ProjectSetupResult  #  Added Code
+from ai_coder.project_setup import ProjectSetupResult
 
 from ai_coder.test_runner import TestRunResult
 from ai_coder.worktree_manager import WorktreeCleanupResult, WorktreeCreateResult
@@ -2595,7 +2595,7 @@ def test_ralph_calls_project_setup_after_sandbox_start_and_before_repository_con
     worktree_path = tmp_path / "worktree"
     fake_sandbox_handle = LocalSandboxProvider(worktree_path)
     project_setup_calls: list[dict[str, object]] = []
-    repository_context_paths: list[object] = []  #  Added Code
+    repository_context_paths: list[object] = []
 
     def fake_sandbox_start(working_directory):
         event_order.append("sandbox_start")
@@ -2630,7 +2630,7 @@ def test_ralph_calls_project_setup_after_sandbox_start_and_before_repository_con
         assert repo_path == tmp_path  #  Changed Code
 
         event_order.append("repository_context")
-        repository_context_paths.append(repo_path)  #  Added Code
+        repository_context_paths.append(repo_path)
 
         return RepositoryContextResult(
             repo_path=tmp_path,  #  Changed Code
@@ -2708,7 +2708,7 @@ def test_ralph_calls_project_setup_after_sandbox_start_and_before_repository_con
             "sandbox_handle": fake_sandbox_handle,
         }
     ]
-    assert repository_context_paths == [tmp_path]  #  Added Code
+    assert repository_context_paths == [tmp_path]
 
 
 def test_ralph_stops_before_repository_context_when_project_setup_blocks(
@@ -2858,9 +2858,9 @@ def test_ralph_continues_to_repository_context_when_project_setup_passes(
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
     _patch_successful_sync_merge(monkeypatch)
 
-    worktree_path = tmp_path / "worktree"  #  Added Code
+    worktree_path = tmp_path / "worktree"
     repository_context_called: list[bool] = []
-    repository_context_paths: list[object] = []  #  Added Code
+    repository_context_paths: list[object] = []
 
     def fake_project_setup_run(worktree_path, sandbox_handle):
         return ProjectSetupResult(
@@ -2888,7 +2888,7 @@ def test_ralph_continues_to_repository_context_when_project_setup_passes(
         assert repo_path == tmp_path  #  Changed Code
 
         repository_context_called.append(True)
-        repository_context_paths.append(repo_path)  #  Added Code
+        repository_context_paths.append(repo_path)
 
         return RepositoryContextResult(
             repo_path=tmp_path,  #  Changed Code
@@ -2948,7 +2948,7 @@ def test_ralph_continues_to_repository_context_when_project_setup_passes(
     assert result.status == RALPH_STATUS_COMPLETE
     assert result.completed is True
     assert repository_context_called == [True]
-    assert repository_context_paths == [tmp_path]  #  Added Code
+    assert repository_context_paths == [tmp_path]
     assert provider.run_count == 1
 
 

@@ -322,8 +322,10 @@ class c_setup_config(BaseModel):
     def get_logger(self) -> logging.Logger:
         if self.logger is None:
 
-            # Avoid import-time failures: lazily create a logger the first time it's requested.
-            self.logger = setup_logger(LOGGER_PROJECT_NAME)
+            self.logger = setup_logger(  #  Changed Code
+                LOGGER_PROJECT_NAME,  #  Added Code
+                secret_values=self.i_setup_config_secret_values(),  #  Added Code
+            )  #  Added Code
             self.logger.info("logger Started!")
         return self.logger
 
@@ -342,6 +344,23 @@ class c_setup_config(BaseModel):
         if cleaned_mode not in {"local", "docker"}:
             raise ValueError("sandbox_mode must be 'local' or 'docker'.")
         self.sandbox_mode = cleaned_mode
+
+    def i_setup_config_secret_values(self) -> tuple[str, ...]:
+        secret_values: list[str] = []
+
+        for env_name in self.docker_secret_env_allowlist:
+            cleaned_env_name = str(env_name).strip()
+
+            if not cleaned_env_name:
+                continue
+
+            raw_secret_value = os.getenv(cleaned_env_name, "")
+            cleaned_secret_value = raw_secret_value.strip().strip("'\"")
+
+            if cleaned_secret_value:
+                secret_values.append(cleaned_secret_value)
+
+        return tuple(secret_values)
 
     ############################################################################
     # Validation and Utility Functions

@@ -9,6 +9,7 @@ from ai_coder.display.display import (
     i_display_command_failure,
     i_display_commit_result,
     i_display_phase,
+    i_display_redact_text,
     i_display_selected_issue,
     i_display_test_result,
 )
@@ -23,4 +24,5 @@ __all__ = [
     "i_display_test_result",
     "i_display_commit_result",
     "i_display_cleanup_result",
+    "i_display_redact_text",
 ]
