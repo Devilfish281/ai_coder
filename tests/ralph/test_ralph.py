@@ -3218,3 +3218,149 @@ def test_ralph_displays_preserved_worktree_path_when_cleanup_preserves_work(
 
     assert result.status == "complete"
     assert f"Preserved worktree: {worktree_path}" in display_text
+
+
+def test_ralph_blocks_and_preserves_worktree_when_docker_sandbox_start_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    docker_failure_message = (
+        "Docker sandbox startup failed: " "Docker image is missing: ai-code-test:latest"
+    )
+    sandbox_start_calls: list[object] = []
+    cleanup_calls: list[dict[str, object]] = []
+    display = SilentDisplay()
+
+    def fake_sandbox_start(working_directory):
+        sandbox_start_calls.append(working_directory)
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="docker",
+            started=False,
+            message=docker_failure_message,
+            handle=None,
+        )
+
+    def fail_repository_context_discover(*args, **kwargs):
+        raise AssertionError(
+            "i_repository_context_discover() should not be called "
+            "after Docker sandbox startup fails."
+        )
+
+    def fail_prompt_resolve(*args, **kwargs):
+        raise AssertionError(
+            "i_prompt_resolve() should not be called "
+            "after Docker sandbox startup fails."
+        )
+
+    def fail_orchestrator_run(*args, **kwargs):
+        raise AssertionError(
+            "i_orchestrator_run() should not be called "
+            "after Docker sandbox startup fails."
+        )
+
+    def fail_test_runner_run(*args, **kwargs):
+        raise AssertionError(
+            "i_test_runner_run() should not be called "
+            "after Docker sandbox startup fails."
+        )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        cleanup_calls.append(
+            {
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "completed": completed,
+                "has_uncommitted_changes": has_uncommitted_changes,
+            }
+        )
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. RALPH did not complete.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fail_repository_context_discover,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_prompt_resolve",
+        fail_prompt_resolve,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_orchestrator_run",
+        fail_orchestrator_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fail_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=28,
+                title="Add Docker sandbox mode selection",
+                body=(
+                    "RALPH should preserve the worktree when Docker sandbox "
+                    "startup fails."
+                ),
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = "\n".join(display.messages)
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 28
+    assert result.completed is False
+    assert result.status == RALPH_STATUS_BLOCKED
+    assert result.prompt == ""
+    assert result.orchestrator_result is None
+    assert docker_failure_message in result.message
+    assert "Preserved worktree:" in result.message
+    assert docker_failure_message in display_text
+    assert "Phase: cleanup" in display_text
+    assert f"Preserved worktree: {worktree_path}" in display_text
+    assert sandbox_start_calls == [worktree_path]
+    assert provider.run_count == 0
+    assert cleanup_calls == [
+        {
+            "repo_path": tmp_path,
+            "worktree_path": worktree_path,
+            "completed": False,
+            "has_uncommitted_changes": None,
+        }
+    ]

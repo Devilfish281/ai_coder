@@ -121,3 +121,159 @@ def test_sandbox_start_reports_missing_local_working_directory(tmp_path) -> None
     assert result.handle is None
     assert "Local sandbox startup failed" in result.message
     assert str(missing_path) in result.message
+
+
+def test_sandbox_start_uses_configured_local_mode_by_default(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "sandbox_mode",
+        "local",
+    )
+
+    result = i_sandbox_start(tmp_path)
+
+    assert result.working_directory == tmp_path
+    assert result.provider_name == "local"
+    assert result.started is True
+    assert result.handle is not None
+    assert isinstance(result.handle, LocalSandboxProvider)
+    assert result.handle.worktree_path == tmp_path
+    assert result.handle.working_directory == tmp_path
+    assert "Started local sandbox provider" in result.message
+
+
+def test_sandbox_start_uses_configured_docker_mode(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    dockerfile_path = tmp_path / "Dockerfile"
+    dockerfile_path.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    image_checks: list[str] = []
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "sandbox_mode",
+        "docker",
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_image_name",
+        "ai-code-test:latest",
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "ralph_dockerfile_path",
+        dockerfile_path,
+    )
+
+    def fake_check_docker_image_exists(self) -> None:
+        image_checks.append(self.image_name)
+
+    monkeypatch.setattr(
+        sandbox_provider_module.DockerSandboxProvider,
+        "_check_docker_image_exists",
+        fake_check_docker_image_exists,
+    )
+
+    result = i_sandbox_start(tmp_path)
+
+    assert result.working_directory == tmp_path
+    assert result.provider_name == "docker"
+    assert result.started is True
+    assert result.handle is not None
+    assert result.handle.name == "docker"
+    assert result.handle.worktree_path == tmp_path
+    assert result.handle.image_name == "ai-code-test:latest"
+    assert image_checks == ["ai-code-test:latest"]
+    assert "Started Docker bind-mount sandbox provider" in result.message
+
+
+def test_sandbox_start_local_mode_does_not_validate_docker_settings(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "sandbox_mode",
+        "local",
+    )
+
+    def fail_if_docker_validation_runs() -> None:
+        raise AssertionError("Local sandbox mode should not validate Docker settings.")
+
+    class FailingDockerSandboxProvider:
+        def __init__(self, *args, **kwargs) -> None:
+            raise AssertionError("Local sandbox mode should not start Docker.")
+
+    monkeypatch.setattr(
+        sandbox_provider_module,
+        "_validate_docker_config_if_available",
+        fail_if_docker_validation_runs,
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module,
+        "DockerSandboxProvider",
+        FailingDockerSandboxProvider,
+    )
+
+    result = i_sandbox_start(tmp_path)
+
+    assert result.provider_name == "local"
+    assert result.started is True
+    assert result.handle is not None
+    assert isinstance(result.handle, LocalSandboxProvider)
+
+
+def test_sandbox_start_returns_clear_failure_when_docker_image_missing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    dockerfile_path = tmp_path / "Dockerfile"
+    dockerfile_path.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+
+    image_name = "missing-ai-code-test:latest"
+    build_command = (
+        "docker build -f .ai_coder/Dockerfile " "-t missing-ai-code-test:latest ."
+    )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "sandbox_mode",
+        "docker",
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_image_name",
+        image_name,
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "ralph_dockerfile_path",
+        dockerfile_path,
+    )
+
+    def fake_docker_sandbox_provider(*args, **kwargs):
+        raise sandbox_provider_module.DockerImageMissingError(
+            f"Docker image is missing: {image_name}\n\n"
+            "Build it with:\n\n"
+            f"{build_command}"
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module,
+        "DockerSandboxProvider",
+        fake_docker_sandbox_provider,
+    )
+
+    result = i_sandbox_start(tmp_path)
+
+    assert result.working_directory == tmp_path
+    assert result.provider_name == "docker"
+    assert result.started is False
+    assert result.handle is None
+    assert "Docker sandbox startup failed" in result.message
+    assert image_name in result.message
+    assert build_command in result.message

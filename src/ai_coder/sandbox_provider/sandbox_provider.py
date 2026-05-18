@@ -558,10 +558,15 @@ def i_sandbox_start(
     :raises ValueError: If the configured sandbox mode is not supported.
     """
 
-    sandbox_mode = getattr(
-        setup_config,
-        "sandbox_mode",
-        provider_name or "local",
+    resolved_working_directory = Path(working_directory)
+    sandbox_mode = (
+        provider_name
+        if provider_name is not None
+        else getattr(
+            setup_config,
+            "sandbox_mode",
+            "local",
+        )
     )
 
     sandbox_mode = str(sandbox_mode).strip().lower()
@@ -569,12 +574,10 @@ def i_sandbox_start(
     logger.info(
         "Starting sandbox. sandbox_mode=%s working_directory=%s",
         sandbox_mode,
-        working_directory,
+        resolved_working_directory,
     )
 
     if sandbox_mode == "local":
-        resolved_working_directory = Path(working_directory)
-
         if not resolved_working_directory.exists():
             message = (
                 "Local sandbox startup failed: "
@@ -608,19 +611,32 @@ def i_sandbox_start(
         )
 
     if sandbox_mode == "docker":
-        _validate_docker_config_if_available()
+        try:
+            _validate_docker_config_if_available()
 
-        handle = DockerSandboxProvider(
-            worktree_path=working_directory,
-        )
+            handle = DockerSandboxProvider(
+                worktree_path=resolved_working_directory,
+            )
+
+        except (DockerImageMissingError, OSError, ValueError) as error:
+            message = f"Docker sandbox startup failed: {error}"
+            logger.error(message)
+
+            return SandboxStartResult(
+                working_directory=resolved_working_directory,
+                provider_name="docker",
+                started=False,
+                message=message,
+                handle=None,
+            )
 
         logger.info(
             "Started Docker bind-mount sandbox provider. working_directory=%s image_name=%s",
-            working_directory,
+            resolved_working_directory,
             setup_config.docker_image_name,
         )
         return SandboxStartResult(
-            working_directory=Path(working_directory),
+            working_directory=resolved_working_directory,
             provider_name="docker",
             started=True,
             message="Started Docker bind-mount sandbox provider.",
