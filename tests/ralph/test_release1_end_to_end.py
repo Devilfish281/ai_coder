@@ -147,7 +147,7 @@ def test_release1_end_to_end_success_commits_after_tests_pass(
     close_calls: list[dict[str, object]] = []
     issue = GitHubIssue(
         number=27,
-        title="Add Release 1 end-to-end RALPH tracer bullet",
+        title="R1 e2e tracer",
         body=(
             "Connect the Release 1 pieces so RALPH proves the safe local "
             "single-issue workflow."
@@ -272,7 +272,7 @@ def test_release1_end_to_end_failure_preserves_worktree(
     close_calls: list[dict[str, object]] = []
     issue = GitHubIssue(
         number=28,
-        title="Release 1 failure path should preserve worktree",
+        title="R1 failure preserve",
         body=(
             "Prove RALPH preserves the worktree when the agent completes "
             "but final pytest fails."
@@ -392,7 +392,7 @@ def test_release1_end_to_end_failure_preserves_worktree(
 
 
 def _build_release1_temp_repo(tmp_path: Path) -> Path:
-    repo_path = tmp_path / "sample_repo"
+    repo_path = tmp_path / "r"
     repo_path.mkdir()
 
     _run_process(["git", "init"], cwd=repo_path)
