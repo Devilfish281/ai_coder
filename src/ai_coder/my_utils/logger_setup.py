@@ -202,54 +202,53 @@ class SecretRedactionFilter(logging.Filter):
 
 def _clean_secret_values(
     secret_values: Iterable[object],
-) -> tuple[str, ...]:  #  Added Code
-    cleaned_values: list[str] = []  #  Added Code
+) -> tuple[str, ...]:
+    cleaned_values: list[str] = []
 
-    for secret_value in secret_values:  #  Added Code
-        cleaned_value = str(secret_value).strip()  #  Added Code
+    for secret_value in secret_values:
+        cleaned_value = str(secret_value).strip()
 
-        if cleaned_value:  #  Added Code
-            cleaned_values.append(cleaned_value)  #  Added Code
+        if cleaned_value:
+            cleaned_values.append(cleaned_value)
 
-    return tuple(cleaned_values)  #  Added Code
-
-
-def _redact_log_text(  #  Added Code
-    text: object,  #  Added Code
-    secret_values: tuple[str, ...],  #  Added Code
-) -> str:  #  Added Code
-    redacted_text = str(text)  #  Added Code
-
-    for secret_value in secret_values:  #  Added Code
-        redacted_text = redacted_text.replace(secret_value, "<redacted>")  #  Added Code
-
-    return redacted_text  #  Added Code
+    return tuple(cleaned_values)
 
 
-def _redact_log_args(  #  Added Code
-    args: object,  #  Added Code
-    secret_values: tuple[str, ...],  #  Added Code
-) -> object:  #  Added Code
-    if isinstance(args, tuple):  #  Added Code
-        return tuple(_redact_log_arg(arg, secret_values) for arg in args)  #  Added Code
+def _redact_log_text(
+    text: object,
+    secret_values: tuple[str, ...],
+) -> str:
+    redacted_text = str(text)
 
-    if isinstance(args, dict):  #  Added Code
-        return {  #  Added Code
-            key: _redact_log_arg(value, secret_values)  #  Added Code
-            for key, value in args.items()  #  Added Code
-        }  #  Added Code
+    for secret_value in secret_values:
+        redacted_text = redacted_text.replace(secret_value, "<redacted>")
 
-    return args  #  Added Code
+    return redacted_text
 
 
-def _redact_log_arg(  #  Added Code
-    arg: object,  #  Added Code
-    secret_values: tuple[str, ...],  #  Added Code
-) -> object:  #  Added Code
-    if isinstance(arg, str):  #  Added Code
-        return _redact_log_text(arg, secret_values)  #  Added Code
+def _redact_log_args(
+    args: object,
+    secret_values: tuple[str, ...],
+) -> object:
+    if isinstance(args, tuple):
+        return tuple(_redact_log_arg(arg, secret_values) for arg in args)
 
-    return arg  #  Added Code
+    if isinstance(args, dict):
+        return {
+            key: _redact_log_arg(value, secret_values) for key, value in args.items()
+        }
+
+    return args
+
+
+def _redact_log_arg(
+    arg: object,
+    secret_values: tuple[str, ...],
+) -> object:
+    if isinstance(arg, str):
+        return _redact_log_text(arg, secret_values)
+
+    return arg
 
 
 class AsyncRotatingFileHandler(RotatingFileHandler):
@@ -558,12 +557,12 @@ class AsyncRotatingFileHandler(RotatingFileHandler):
             self._debug("AsyncRotatingFileHandler closed")  # Debug statement
 
 
-def setup_logger(  #  Changed Code
-    logger_name=None,  #  Added Code
-    config_file=None,  #  Added Code
-    debug_messages=False,  #  Added Code
-    secret_values: Iterable[object] = (),  #  Added Code
-):  #  Added Code
+def setup_logger(
+    logger_name=None,
+    config_file=None,
+    debug_messages=False,
+    secret_values: Iterable[object] = (),
+):
     """
     Set up a named logger with asynchronous file logging and dynamic configuration.
 
@@ -624,7 +623,7 @@ def setup_logger(  #  Changed Code
     # Prevents log messages from propagating to parent loggers.
     logger.propagate = False
 
-    redaction_filter = SecretRedactionFilter(secret_values)  #  Added Code
+    redaction_filter = SecretRedactionFilter(secret_values)
 
     existing_handlers = list(logger.handlers)
 
@@ -666,7 +665,7 @@ def setup_logger(  #  Changed Code
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         console_handler.setLevel(getattr(logging, config["log_level"], logging.INFO))
-        console_handler.addFilter(redaction_filter)  #  Added Code
+        console_handler.addFilter(redaction_filter)
         console_handler._test_browser_mcp_handler = True
         console_handler._test_browser_mcp_handler_type = "console"
 
@@ -695,7 +694,7 @@ def setup_logger(  #  Changed Code
                     "%(asctime)s %(levelname)s %(name)s:%(lineno)d [%(threadName)s] %(message)s"
                 )
             )
-            file_handler.addFilter(redaction_filter)  #  Added Code
+            file_handler.addFilter(redaction_filter)
             file_handler._test_browser_mcp_handler = True
             file_handler._test_browser_mcp_handler_type = "file"
             logger.addHandler(file_handler)

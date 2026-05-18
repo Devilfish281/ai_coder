@@ -422,7 +422,7 @@ def i_ralph_run(
     )
 
     repository_context_result = i_repository_context_discover(
-        repository_result.repo_path
+        worktree_result.worktree_path
     )
 
     logger.info(repository_context_result.prompt_summary)

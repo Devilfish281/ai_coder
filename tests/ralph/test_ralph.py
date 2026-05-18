@@ -1775,7 +1775,7 @@ def test_ralph_includes_sandbox_aware_prompt_placeholders_after_sandbox_start(
     def fake_repository_context_discover(repo_path):
         discovered_repo_paths.append(repo_path)
         return RepositoryContextResult(
-            repo_path=tmp_path,
+            repo_path=worktree_path,
             package_manager="poetry",
             test_command="poetry run pytest",
             test_command_source="configured",
@@ -1858,7 +1858,7 @@ def test_ralph_includes_sandbox_aware_prompt_placeholders_after_sandbox_start(
     assert "Done: <promise>COMPLETE</promise>" in result.prompt
     assert provider.prompts == [result.prompt]
     assert sandbox_start_paths == [worktree_path]
-    assert discovered_repo_paths == [tmp_path]
+    assert discovered_repo_paths == [worktree_path]
 
 
 def test_ralph_includes_repository_context_when_prompt_requests_it(
@@ -1871,12 +1871,13 @@ def test_ralph_includes_repository_context_when_prompt_requests_it(
     _patch_passing_test_runner(monkeypatch)
     _patch_successful_sync_merge(monkeypatch)
 
+    worktree_path = tmp_path / "worktree"
     discovered_repo_paths: list[object] = []
 
     def fake_repository_context_discover(repo_path):
         discovered_repo_paths.append(repo_path)
         return RepositoryContextResult(
-            repo_path=tmp_path,
+            repo_path=worktree_path,
             package_manager="poetry",
             test_command="poetry run pytest",
             test_command_source="inferred_from_poetry",
@@ -1926,7 +1927,7 @@ def test_ralph_includes_repository_context_when_prompt_requests_it(
     assert "Issue #8: Add repository context discovery" in result.prompt
     assert "RALPH should include repository context in the prompt." in result.prompt
     assert provider.prompts == [result.prompt]
-    assert discovered_repo_paths == [tmp_path]
+    assert discovered_repo_paths == [worktree_path]
 
 
 def test_ralph_default_prompt_includes_repository_context(
@@ -1939,12 +1940,13 @@ def test_ralph_default_prompt_includes_repository_context(
     _patch_passing_test_runner(monkeypatch)
     _patch_successful_sync_merge(monkeypatch)
 
+    worktree_path = tmp_path / "worktree"
     discovered_repo_paths: list[object] = []
 
     def fake_repository_context_discover(repo_path):
         discovered_repo_paths.append(repo_path)
         return RepositoryContextResult(
-            repo_path=tmp_path,
+            repo_path=worktree_path,
             package_manager="poetry",
             test_command="poetry run pytest",
             test_command_source="configured",
@@ -1988,7 +1990,7 @@ def test_ralph_default_prompt_includes_repository_context(
     assert "Test command: poetry run pytest" in result.prompt
     assert "Default prompts should include repository context." in result.prompt
     assert provider.prompts == [result.prompt]
-    assert discovered_repo_paths == [tmp_path]
+    assert discovered_repo_paths == [worktree_path]
 
 
 def test_ralph_selects_issue_builds_prompt_and_completes(
@@ -2627,13 +2629,13 @@ def test_ralph_calls_project_setup_after_sandbox_start_and_before_repository_con
 
     def fake_repository_context_discover(repo_path):
         assert event_order == ["sandbox_start", "project_setup"]
-        assert repo_path == tmp_path  #  Changed Code
+        assert repo_path == worktree_path
 
         event_order.append("repository_context")
         repository_context_paths.append(repo_path)
 
         return RepositoryContextResult(
-            repo_path=tmp_path,  #  Changed Code
+            repo_path=worktree_path,
             package_manager="poetry",
             test_command="poetry run pytest",
             test_command_source="configured",
@@ -2708,7 +2710,7 @@ def test_ralph_calls_project_setup_after_sandbox_start_and_before_repository_con
             "sandbox_handle": fake_sandbox_handle,
         }
     ]
-    assert repository_context_paths == [tmp_path]
+    assert repository_context_paths == [worktree_path]
 
 
 def test_ralph_stops_before_repository_context_when_project_setup_blocks(
@@ -2885,13 +2887,13 @@ def test_ralph_continues_to_repository_context_when_project_setup_passes(
         )
 
     def fake_repository_context_discover(repo_path):
-        assert repo_path == tmp_path  #  Changed Code
+        assert repo_path == worktree_path
 
         repository_context_called.append(True)
         repository_context_paths.append(repo_path)
 
         return RepositoryContextResult(
-            repo_path=tmp_path,  #  Changed Code
+            repo_path=worktree_path,
             package_manager="poetry",
             test_command="poetry run pytest",
             test_command_source="configured",
@@ -2948,7 +2950,7 @@ def test_ralph_continues_to_repository_context_when_project_setup_passes(
     assert result.status == RALPH_STATUS_COMPLETE
     assert result.completed is True
     assert repository_context_called == [True]
-    assert repository_context_paths == [tmp_path]
+    assert repository_context_paths == [worktree_path]
     assert provider.run_count == 1
 
 
