@@ -445,15 +445,26 @@ class DockerSandboxProvider:
     def _build_volume_args(self) -> list[str]:
         """Build Docker ``-v`` arguments for the worktree and Git metadata.
 
+        The main worktree mount is writable because Docker bind-mount mode must
+        let file edits made inside the container appear in the host worktree.
+
+        Git metadata mounts are added only when the worktree uses linked Git
+        worktree metadata. Windows-specific Git worktree patching stays inside
+        ``mount_utils.py``.
+
         :return: Docker volume arguments suitable for ``subprocess.run()``.
         """
 
         worktree_mount = DockerMount(
             host_path=self.worktree_path,
             sandbox_path=SANDBOX_REPO_DIR,
+            readonly=False,
         )
 
-        git_mounts = _build_git_mounts(self.worktree_path, self.host_repo_path)
+        git_mounts = _build_git_mounts(
+            self.worktree_path,
+            self.host_repo_path,
+        )
 
         patched_git_mounts = i_mountutils_patch_git_mounts_for_windows(
             git_mounts=git_mounts,
@@ -462,12 +473,12 @@ class DockerSandboxProvider:
         )
 
         all_mounts = [worktree_mount, *patched_git_mounts]
+
         logger.debug(
             "Built Docker sandbox mounts. mounts=%s",
             all_mounts,
         )
 
-        # TODO: Later support extra user-defined mounts from setup_config.py.
         return i_mountutils_build_docker_volume_args(all_mounts)
 
     def _build_env_args(self) -> list[str]:  #

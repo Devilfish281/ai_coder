@@ -1,7 +1,7 @@
 # tests/sandbox_provider/test_sandbox_provider.py
 import subprocess
 import sys
-
+from pathlib import Path
 import pytest
 
 import ai_coder.sandbox_provider.sandbox_provider as sandbox_provider_module
@@ -285,9 +285,14 @@ def test_docker_sandbox_provider_checks_image_once_per_handle(
         text,
         check=False,
     ):
-        commands.append(list(command))
+        command_parts = list(command)
+        commands.append(command_parts)
 
-        if list(command[:3]) == ["docker", "image", "inspect"]:
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
             return subprocess.CompletedProcess(
                 args=command,
                 returncode=0,
@@ -295,11 +300,19 @@ def test_docker_sandbox_provider_checks_image_once_per_handle(
                 stderr="",
             )
 
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="command passed",
+                stderr="",
+            )
+
         return subprocess.CompletedProcess(
             args=command,
-            returncode=0,
-            stdout="command passed",
-            stderr="",
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
         )
 
     monkeypatch.setattr(
@@ -326,10 +339,634 @@ def test_docker_sandbox_provider_checks_image_once_per_handle(
 
     assert first_result.succeeded is True
     assert second_result.succeeded is True
+    assert first_result.stdout == "command passed"
+    assert second_result.stdout == "command passed"
     assert image_inspect_commands == [
         ["docker", "image", "inspect", image_name],
     ]
     assert len(docker_run_commands) == 2
+    assert docker_run_commands[0][-2:] == ["python", "--version"]
+    assert docker_run_commands[1][-2:] == ["pytest", "--version"]
+
+
+def test_docker_sandbox_provider_runs_command_with_bind_mount_and_workspace(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="hello from docker\n",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(
+        ["python", "-c", "print('hello from docker')"]
+    )
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    volume_index = docker_run_command.index("-v")
+    workdir_index = docker_run_command.index("-w")
+    image_index = docker_run_command.index(image_name)
+
+    assert result.succeeded is True
+    assert result.failed is False
+    assert result.stdout == "hello from docker\n"
+    assert result.stderr == ""
+    assert result.exit_code == 0
+    assert docker_run_command[:3] == ["docker", "run", "--rm"]
+    assert docker_run_command[volume_index + 1] == f"{tmp_path}:/workspace"
+    assert docker_run_command[workdir_index + 1] == "/workspace"
+    assert docker_run_command[image_index + 1 :] == [
+        "python",
+        "-c",
+        "print('hello from docker')",
+    ]
+
+
+def test_docker_sandbox_provider_returns_failed_command_result(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=7,
+                stdout="partial output",
+                stderr="command failed",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["python", "-c", "bad"])
+
+    assert result.stdout == "partial output"
+    assert result.stderr == "command failed"
+    assert result.exit_code == 7
+    assert result.failed is True
+    assert result.succeeded is False
+
+
+def test_docker_sandbox_provider_keeps_normal_env_allowlist_behavior_with_docker_run(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+
+    monkeypatch.delenv("PYTHONUNBUFFERED", raising=False)
+    monkeypatch.setenv("RALPH_NORMAL_ENV_030", "visible-value-030")
+    monkeypatch.delenv("RALPH_MISSING_ENV_030", raising=False)
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        (
+            "PYTHONUNBUFFERED",
+            "RALPH_NORMAL_ENV_030",
+            "RALPH_MISSING_ENV_030",
+        ),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (),
+    )
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="env command passed",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["python", "-c", "print('env')"])
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    env_values = [
+        docker_run_command[index + 1]
+        for index, command_part in enumerate(docker_run_command)
+        if command_part == "-e"
+    ]
+
+    assert result.succeeded is True
+    assert "PYTHONUNBUFFERED=1" in env_values
+    assert "RALPH_NORMAL_ENV_030=visible-value-030" in env_values
+    assert not any(
+        env_value.startswith("RALPH_MISSING_ENV_030=") for env_value in env_values
+    )
+
+
+def test_docker_sandbox_provider_keeps_secret_env_allowlist_behavior_with_docker_run(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    redaction_calls: list[tuple[list[str], tuple[str, ...]]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    secret_name = "RALPH_SECRET_ENV_030"
+    secret_value = "super-secret-value-030"
+    original_redact = sandbox_provider_module.i_dockercommand_redact
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (secret_name,),
+    )
+    monkeypatch.setenv(secret_name, secret_value)
+
+    def fake_redact(command, secret_env_names):
+        redaction_calls.append((list(command), tuple(secret_env_names)))
+        return original_redact(command, secret_env_names)
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="secret env command passed",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module,
+        "i_dockercommand_redact",
+        fake_redact,
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["python", "-c", "print('secret')"])
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    env_values = [
+        docker_run_command[index + 1]
+        for index, command_part in enumerate(docker_run_command)
+        if command_part == "-e"
+    ]
+    redacted_command = original_redact(
+        redaction_calls[0][0],
+        redaction_calls[0][1],
+    )
+
+    assert result.succeeded is True
+    assert f"{secret_name}={secret_value}" in env_values
+    assert redaction_calls[0][1] == (secret_name,)
+    assert secret_value not in " ".join(redacted_command)
+    assert f"{secret_name}=<redacted>" in redacted_command
+
+
+def test_docker_sandbox_provider_missing_secret_env_still_raises_when_building_docker_command(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    secret_name = "RALPH_MISSING_SECRET_ENV_030"
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (secret_name,),
+    )
+    monkeypatch.delenv(secret_name, raising=False)
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    with pytest.raises(
+        ValueError, match=f"Missing required Docker secret env var: {secret_name}"
+    ):
+        provider.i_sandboxhandle_run(["python", "-c", "print('secret')"])
+
+    assert commands == [["docker", "image", "inspect", image_name]]
+
+
+def test_docker_sandbox_provider_bind_mount_allows_container_file_edits_to_appear_on_host(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    marker_file = tmp_path / "docker_marker.txt"
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            marker_file.write_text(
+                "written from docker bind mount",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="wrote marker",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["python", "-c", "write marker"])
+
+    assert marker_file.read_text(encoding="utf-8") == "written from docker bind mount"
+    assert result.stdout == "wrote marker"
+    assert result.stderr == ""
+    assert result.exit_code == 0
+    assert result.succeeded is True
+    assert result.failed is False
+
+
+def test_docker_sandbox_provider_uses_workspace_as_default_workdir(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="/workspace\n",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["pwd"])
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    workdir_index = docker_run_command.index("-w")
+
+    assert result.succeeded is True
+    assert result.stdout == "/workspace\n"
+    assert docker_run_command[workdir_index + 1] == "/workspace"
+
+
+def test_docker_sandbox_provider_maps_relative_cwd_under_workspace(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="/workspace/tests\n",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["pwd"], cwd=Path("tests"))
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    workdir_index = docker_run_command.index("-w")
+
+    assert result.succeeded is True
+    assert result.stdout == "/workspace/tests\n"
+    assert docker_run_command[workdir_index + 1] == "/workspace/tests"
 
 
 def test_docker_sandbox_provider_missing_image_raises_clear_error(
