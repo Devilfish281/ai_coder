@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from ai_coder.sandbox_provider.sandbox_provider import (
     CommandResult,
+    DockerImageMissingError,
+    DockerSandboxProvider,
     LocalSandboxProvider,
     SandboxStartResult,
     i_sandbox_start,
@@ -10,6 +12,8 @@ from ai_coder.sandbox_provider.sandbox_provider import (
 
 __all__ = [
     "CommandResult",
+    "DockerImageMissingError",
+    "DockerSandboxProvider",
     "LocalSandboxProvider",
     "SandboxStartResult",
     "i_sandbox_start",

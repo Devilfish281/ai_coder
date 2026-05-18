@@ -1,5 +1,6 @@
 # tests/main/test_main.py
 import importlib
+from types import SimpleNamespace
 
 import ai_coder.ralph.ralph as ralph_module
 from ai_coder.repository_context import RepositoryStartResult
@@ -554,3 +555,72 @@ def test_main_redacts_configured_secret_value_from_user_output(
     assert "super-secret-value-026" not in captured.out
     assert "<redacted>" in captured.out
     assert "Selected issue #26: Fix <redacted> leak" in captured.out
+
+
+def test_main_rejects_invalid_sandbox_leaves_setup_config_unchanged(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+    original_config = main_module.setup_config.to_dict()
+
+    exit_code = main_module.main(["--sandbox", "cloud"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error: --sandbox must be 'local' or 'docker'." in captured.out
+    assert main_module.setup_config.to_dict() == original_config
+
+
+def test_main_docker_sandbox_cli_override_updates_setup_config_without_real_docker(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+
+    def fake_ralph_run(
+        issues=None,
+        max_iterations=3,
+        prompt_path=None,
+        repo_path=None,
+        display=None,
+    ):
+        return SimpleNamespace(
+            selected_issue=SimpleNamespace(
+                number=28,
+                title="Add Docker sandbox mode selection",
+            ),
+            prompt="fake prompt",
+            orchestrator_result=SimpleNamespace(
+                iterations=1,
+                final_output="Done\n<promise>COMPLETE</promise>",
+            ),
+            completed=True,
+            message="RALPH completed the selected issue.",
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "i_ralph_run",
+        fake_ralph_run,
+    )
+
+    exit_code = main_module.main(
+        [
+            "--sandbox",
+            "docker",
+            "--agent",
+            "mock",
+            "--repo-path",
+            str(tmp_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Selected issue #28: Add Docker sandbox mode selection" in captured.out
+    assert main_module.setup_config.sandbox_mode == "docker"
