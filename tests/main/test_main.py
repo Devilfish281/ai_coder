@@ -277,7 +277,7 @@ def test_main_custom_issue_text_stays_inert(capsys, monkeypatch, tmp_path) -> No
     assert "Selected issue #14: Fix !`echo title`" in captured.out
     assert "RALPH final prompt length:" in captured.out
     assert "RALPH final prompt:" not in captured.out
-    assert issue_body not in captured.out  #  Changed Code
+    assert issue_body not in captured.out
     assert "RALPH completed the selected issue." in captured.out
 
 

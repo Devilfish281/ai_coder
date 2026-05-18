@@ -26,7 +26,7 @@ class ConsoleDisplay:
         self.secret_values = tuple(secret_values)
 
     def i_display_message(self, message: str) -> None:
-        print(i_display_redact_text(message, self.secret_values))  #  Changed Code
+        print(i_display_redact_text(message, self.secret_values))
 
 
 def i_display_redact_text(

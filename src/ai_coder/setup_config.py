@@ -322,10 +322,10 @@ class c_setup_config(BaseModel):
     def get_logger(self) -> logging.Logger:
         if self.logger is None:
 
-            self.logger = setup_logger(  #  Changed Code
-                LOGGER_PROJECT_NAME,  #  Added Code
-                secret_values=self.i_setup_config_secret_values(),  #  Added Code
-            )  #  Added Code
+            self.logger = setup_logger(
+                LOGGER_PROJECT_NAME,
+                secret_values=self.i_setup_config_secret_values(),
+            )
             self.logger.info("logger Started!")
         return self.logger
 
