@@ -6,6 +6,7 @@ import pytest
 from ai_coder.setup_config import (
     DEFAULT_AGENT_NAME,
     DEFAULT_COMMIT_MESSAGE_TEMPLATE,
+    DEFAULT_DOCKER_IMAGE_NAME,
     DEFAULT_GITHUB_REPO,
     DEFAULT_PROJECT_NAME,
     DEFAULT_TEST_COMMAND,
@@ -163,6 +164,19 @@ def test_setup_config_loads_safe_defaults_when_env_values_are_missing(
     assert config.max_iterations == 3
     assert config.prompt_path == prompt_file
     assert config.sandbox_mode == "local"
+
+
+def test_setup_config_default_docker_image_name_is_release_2_default(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    config = _fresh_config()
+
+    assert DEFAULT_DOCKER_IMAGE_NAME == "ai-code-ralph-test-runtime:latest"
+    assert config.docker_image_name == DEFAULT_DOCKER_IMAGE_NAME
 
 
 def test_setup_config_env_values_override_defaults(monkeypatch, tmp_path) -> None:
