@@ -1,3 +1,4 @@
+# src/ai_coder/sandbox_provider/mount_utils.py
 from __future__ import annotations
 
 import platform
@@ -20,6 +21,32 @@ class DockerMount:
 class ParsedGitDirPath:
     parent_git_dir: str
     worktree_name: str
+
+
+def i_mountutils_to_docker_host_path(
+    host_path: str | Path,
+    platform_name: str | None = None,
+) -> str:
+    """Convert a host path into Docker-friendly host path text.
+
+    Windows paths are normalized for Docker bind-mount command arguments by
+    converting backslashes to forward slashes while preserving the native drive
+    letter form.
+
+    :param host_path: Host path to mount into Docker.
+    :type host_path: str | Path
+    :param platform_name: Optional platform override for tests.
+    :type platform_name: str | None
+    :return: Docker-friendly host path text.
+    :rtype: str
+    """
+
+    cleaned_path = _strip_outer_quotes(str(host_path))
+
+    if _is_windows_platform(platform_name):
+        return _normalize_path_text(cleaned_path)
+
+    return cleaned_path
 
 
 def i_mountutils_patch_git_mounts_for_windows(
@@ -101,12 +128,27 @@ def i_mountutils_patch_git_mounts_for_windows(
 
 def i_mountutils_build_docker_volume_args(
     mounts: list[DockerMount],
+    platform_name: str | None = None,
 ) -> list[str]:
-    """Build docker -v arguments from DockerMount values."""
+    """Build docker -v arguments from DockerMount values.
+
+    :param mounts: Docker mounts to convert into command arguments.
+    :type mounts: list[DockerMount]
+    :param platform_name: Optional platform override for tests.
+    :type platform_name: str | None
+    :return: Docker volume arguments.
+    :rtype: list[str]
+    """
+
     volume_args: list[str] = []
 
     for mount in mounts:
-        mount_text = f"{mount.host_path}:{mount.sandbox_path}"
+        host_path_text = i_mountutils_to_docker_host_path(
+            mount.host_path,
+            platform_name=platform_name,
+        )
+        mount_text = f"{host_path_text}:{mount.sandbox_path}"
+
         if mount.readonly:
             mount_text = f"{mount_text}:ro"
 
@@ -142,6 +184,27 @@ def _create_corrected_git_file(worktree_name: str) -> Path:
         encoding="utf-8",
     )
     return corrected_git_file_path
+
+
+def _is_windows_platform(platform_name: str | None = None) -> bool:
+    active_platform = platform_name or platform.system()
+    cleaned_platform = active_platform.strip().lower()
+
+    return cleaned_platform in {"windows", "win32"} or cleaned_platform.startswith(
+        "win"
+    )
+
+
+def _strip_outer_quotes(path_text: str) -> str:
+    cleaned_path = path_text.strip()
+
+    if len(cleaned_path) < 2:
+        return cleaned_path
+
+    if cleaned_path[0] == cleaned_path[-1] and cleaned_path[0] in {"'", '"'}:
+        return cleaned_path[1:-1]
+
+    return cleaned_path
 
 
 def _normalize_path_text(path_text: str) -> str:

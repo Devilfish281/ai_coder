@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 import pytest
 
+from ai_coder.sandbox_provider.mount_utils import i_mountutils_to_docker_host_path
 import ai_coder.sandbox_provider.sandbox_provider as sandbox_provider_module
 from ai_coder.sandbox_provider import (
     CommandResult,
@@ -423,7 +424,16 @@ def test_docker_sandbox_provider_runs_command_with_bind_mount_and_workspace(
     assert result.stderr == ""
     assert result.exit_code == 0
     assert docker_run_command[:3] == ["docker", "run", "--rm"]
-    assert docker_run_command[volume_index + 1] == f"{tmp_path}:/workspace"
+
+    expected_host_path = i_mountutils_to_docker_host_path(
+        tmp_path,
+        platform_name="windows",
+    )
+
+    assert (
+        docker_run_command[volume_index + 1] == f"{expected_host_path}:/workspace"
+    )  #  Changed Code
+
     assert docker_run_command[workdir_index + 1] == "/workspace"
     assert docker_run_command[image_index + 1 :] == [
         "python",
