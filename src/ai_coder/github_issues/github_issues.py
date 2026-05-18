@@ -120,8 +120,8 @@ def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
         command,
         capture_output=True,
         text=True,
-        encoding="utf-8",  #  Added Code
-        errors="replace",  #  Added Code
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 

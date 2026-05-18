@@ -1,3 +1,4 @@
+# tests/setup_config/test_setup_config.py
 from pathlib import Path
 
 import pytest
@@ -419,3 +420,57 @@ def test_setup_config_codex_mode_accepts_codex_command(
     config = _fresh_config()
 
     config.validate_initialization()
+
+
+def test_setup_config_secret_values_returns_configured_existing_env_value(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_TEST_SECRET_026", "super-secret-value")
+
+    config = _fresh_config()
+    config.docker_secret_env_allowlist = ("RALPH_TEST_SECRET_026",)
+
+    result = config.i_setup_config_secret_values()
+
+    assert result == ("super-secret-value",)
+
+
+def test_setup_config_secret_values_skips_missing_and_empty_secret_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv("RALPH_MISSING_SECRET_026", raising=False)
+    monkeypatch.setenv("RALPH_EMPTY_SECRET_026", "   ")
+
+    config = _fresh_config()
+    config.docker_secret_env_allowlist = (
+        "RALPH_MISSING_SECRET_026",
+        "RALPH_EMPTY_SECRET_026",
+    )
+
+    result = config.i_setup_config_secret_values()
+
+    assert result == ()
+
+
+def test_setup_config_secret_values_does_not_use_normal_env_allowlist(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("PYTHONUNBUFFERED", "1")
+
+    config = _fresh_config()
+    config.docker_env_allowlist = ("PYTHONUNBUFFERED",)
+    config.docker_secret_env_allowlist = ()
+
+    result = config.i_setup_config_secret_values()
+
+    assert result == ()
+    assert "1" not in result

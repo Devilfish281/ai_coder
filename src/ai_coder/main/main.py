@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-from ai_coder.display import ConsoleDisplay  #  Added Code
+from ai_coder.display import ConsoleDisplay, i_display_redact_text
 from ai_coder.github_issues import (
     GitHubIssue,
     ProvidedIssueData,
@@ -219,7 +219,9 @@ def main(
         max_iterations=setup_config.max_iterations,
         prompt_path=setup_config.prompt_path,
         repo_path=setup_config.repo_path,
-        display=ConsoleDisplay(),
+        display=ConsoleDisplay(
+            secret_values=setup_config.i_setup_config_secret_values(),
+        ),
     )
 
     _write_info("#" * 80, use_logger=use_logger_t)
@@ -232,7 +234,11 @@ def main(
         use_logger=use_logger_t,
     )
 
-    _write_info(f"RALPH final prompt:\n{result.prompt}", use_logger=use_logger_t)
+    # _write_info(f"RALPH final prompt:\n{result.prompt}", use_logger=use_logger_t)
+    _write_info(
+        f"RALPH final prompt length: {len(result.prompt)}",
+        use_logger=use_logger_t,
+    )
 
     _write_info(
         f"RALPH orchestrator iterations: {result.orchestrator_result.iterations if result.orchestrator_result else 'N/A'}",
@@ -356,11 +362,15 @@ def _write_info(
     *message_args: object,
     use_logger: bool,
 ) -> None:
+    formatted_message = _redact_message(
+        _format_message(message, message_args),
+    )
+
     if use_logger:
-        logger.info(message, *message_args)
+        logger.info(formatted_message)
         return
 
-    print(_format_message(message, message_args))
+    print(formatted_message)
 
 
 def _write_warning(
@@ -368,11 +378,15 @@ def _write_warning(
     *message_args: object,
     use_logger: bool,
 ) -> None:
+    formatted_message = _redact_message(
+        _format_message(message, message_args),
+    )
+
     if use_logger:
-        logger.warning(message, *message_args)
+        logger.warning(formatted_message)
         return
 
-    print(_format_message(message, message_args))
+    print(formatted_message)
 
 
 def _write_error(
@@ -380,11 +394,15 @@ def _write_error(
     *message_args: object,
     use_logger: bool,
 ) -> None:
+    formatted_message = _redact_message(
+        _format_message(message, message_args),
+    )
+
     if use_logger:
-        logger.error(message, *message_args)
+        logger.error(formatted_message)
         return
 
-    print(_format_message(message, message_args))
+    print(formatted_message)
 
 
 def _format_message(
@@ -395,6 +413,13 @@ def _format_message(
         return message
 
     return message % message_args
+
+
+def _redact_message(message: str) -> str:
+    return i_display_redact_text(
+        message,
+        setup_config.i_setup_config_secret_values(),
+    )
 
 
 def _build_fake_issue_from_config() -> GitHubIssue:
