@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+
+from ai_coder.display import ConsoleDisplay  #  Added Code
 from ai_coder.github_issues import (
     GitHubIssue,
     ProvidedIssueData,
@@ -211,12 +213,15 @@ def main(
         setup_config.prompt_path,
         use_logger=use_logger_t,
     )
+
     result = i_ralph_run(
         issues,
         max_iterations=setup_config.max_iterations,
         prompt_path=setup_config.prompt_path,
         repo_path=setup_config.repo_path,
+        display=ConsoleDisplay(),
     )
+
     _write_info("#" * 80, use_logger=use_logger_t)
     _write_info("RALPH run completed.", use_logger=use_logger_t)
     _write_info("#" * 80, use_logger=use_logger_t)
