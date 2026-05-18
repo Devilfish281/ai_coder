@@ -519,6 +519,49 @@ class DockerSandboxProvider:
         # TODO: Later consider Docker secrets for sensitive values instead of env vars.
         return env_args  #
 
+    def _build_secret_env_args(self) -> list[str]:
+        """Build Docker environment arguments for configured secret values.
+
+        Secret values are validated when the Docker command is built, not when
+        the Docker provider is constructed. This keeps image validation separate
+        from secret validation.
+
+        :return: Docker ``-e`` arguments for configured secret env values.
+        :raises ValueError: If a configured secret env var is missing or empty.
+        """
+
+        secret_env_args: list[str] = []
+        allowed_secret_env_names = getattr(
+            setup_config,
+            "docker_secret_env_allowlist",
+            (),
+        )
+
+        for env_name in allowed_secret_env_names:
+            cleaned_name = str(env_name).strip()
+
+            if not cleaned_name:
+                continue
+
+            env_value = os.getenv(cleaned_name, "").strip()
+
+            if not env_value:
+                raise ValueError(
+                    f"Missing required Docker secret env var: {cleaned_name}"
+                )
+
+            secret_env_args.extend(["-e", f"{cleaned_name}={env_value}"])
+
+        logger.debug(
+            "Built Docker secret env args. secret_env_names=%s",
+            [
+                secret_env_args[index + 1].split("=", 1)[0]
+                for index in range(0, len(secret_env_args), 2)
+            ],
+        )
+
+        return secret_env_args
+
     def _resolve_sandbox_cwd(self, cwd: Path | None) -> str:
         """Convert a host-side ``cwd`` into the Docker-side path.
 
@@ -857,12 +900,3 @@ def _command_result_from_os_error(error: OSError) -> CommandResult:
         stderr=str(error),
         exit_code=1,
     )
-
-
-def _build_secret_env_args() -> list[str]:
-    """Build Docker env args for secret-like values.
-
-    For the local learning prototype, this may use normal Docker -e args.
-    Later this function can be changed to Docker secrets or another secret
-    provider without changing DockerSandboxProvider.i_sandboxhandle_run().
-    """

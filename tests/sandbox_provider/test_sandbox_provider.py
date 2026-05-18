@@ -1,4 +1,5 @@
 # tests/sandbox_provider/test_sandbox_provider.py
+import subprocess
 import sys
 
 import pytest
@@ -6,6 +7,8 @@ import pytest
 import ai_coder.sandbox_provider.sandbox_provider as sandbox_provider_module
 from ai_coder.sandbox_provider import (
     CommandResult,
+    DockerImageMissingError,
+    DockerSandboxProvider,
     LocalSandboxProvider,
     i_sandbox_start,
 )
@@ -225,6 +228,374 @@ def test_sandbox_start_local_mode_does_not_validate_docker_settings(
     assert result.started is True
     assert result.handle is not None
     assert isinstance(result.handle, LocalSandboxProvider)
+
+
+def test_docker_sandbox_provider_checks_image_on_handle_creation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        commands.append(list(command))
+        assert capture_output is True
+        assert text is True
+        assert check is False
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="[]",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    assert provider.image_name == image_name
+    assert commands == [["docker", "image", "inspect", image_name]]
+
+
+def test_docker_sandbox_provider_checks_image_once_per_handle(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        commands.append(list(command))
+
+        if list(command[:3]) == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="command passed",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    first_result = provider.i_sandboxhandle_run(["python", "--version"])
+    second_result = provider.i_sandboxhandle_run(["pytest", "--version"])
+
+    image_inspect_commands = [
+        command for command in commands if command[:3] == ["docker", "image", "inspect"]
+    ]
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+
+    assert first_result.succeeded is True
+    assert second_result.succeeded is True
+    assert image_inspect_commands == [
+        ["docker", "image", "inspect", image_name],
+    ]
+    assert len(docker_run_commands) == 2
+
+
+def test_docker_sandbox_provider_missing_image_raises_clear_error(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    image_name = "missing-ai-code-test:latest"
+    build_command = (
+        "docker build -f .ai_coder/Dockerfile " "-t missing-ai-code-test:latest ."
+    )
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout="",
+            stderr=f"No such image: {image_name}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    with pytest.raises(DockerImageMissingError) as error_info:
+        DockerSandboxProvider(
+            worktree_path=tmp_path,
+            image_name=image_name,
+            docker_build_command=build_command,
+        )
+
+    message = str(error_info.value)
+
+    assert f"Docker image is missing: {image_name}" in message
+    assert "Build it with:" in message
+    assert build_command in message
+    assert f"No such image: {image_name}" in message
+
+
+def test_docker_sandbox_provider_missing_image_does_not_auto_build_or_pull(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    image_name = "missing-ai-code-test:latest"
+    build_command = (
+        "docker build -f .ai_coder/Dockerfile " "-t missing-ai-code-test:latest ."
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=1,
+                stdout="",
+                stderr=f"No such image: {image_name}",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    with pytest.raises(DockerImageMissingError):
+        DockerSandboxProvider(
+            worktree_path=tmp_path,
+            image_name=image_name,
+            docker_build_command=build_command,
+        )
+
+    assert commands == [["docker", "image", "inspect", image_name]]
+    assert not any("build" in command for command in commands)
+    assert not any("pull" in command for command in commands)
+
+
+def test_sandbox_start_docker_missing_image_does_not_auto_build_or_pull(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    dockerfile_path = tmp_path / "Dockerfile"
+    dockerfile_path.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    image_name = "missing-ai-code-test:latest"
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "sandbox_mode",
+        "docker",
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_image_name",
+        image_name,
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "ralph_dockerfile_path",
+        dockerfile_path,
+    )
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=1,
+                stdout="",
+                stderr=f"No such image: {image_name}",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    result = i_sandbox_start(tmp_path)
+
+    assert result.provider_name == "docker"
+    assert result.started is False
+    assert result.handle is None
+    assert "Docker sandbox startup failed" in result.message
+    assert image_name in result.message
+    assert commands == [["docker", "image", "inspect", image_name]]
+    assert not any("build" in command for command in commands)
+    assert not any("pull" in command for command in commands)
+
+
+def test_sandbox_start_local_mode_ignores_broken_docker_image_configuration(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    missing_dockerfile_path = tmp_path / "missing.Dockerfile"
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "sandbox_mode",
+        "local",
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_image_name",
+        "",
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "ralph_dockerfile_path",
+        missing_dockerfile_path,
+    )
+
+    def fail_if_docker_validation_runs() -> None:
+        raise AssertionError("Local sandbox mode should not validate Docker settings.")
+
+    class FailingDockerSandboxProvider:
+        def __init__(self, *args, **kwargs) -> None:
+            raise AssertionError("Local sandbox mode should not start Docker.")
+
+    monkeypatch.setattr(
+        sandbox_provider_module,
+        "_validate_docker_config_if_available",
+        fail_if_docker_validation_runs,
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module,
+        "DockerSandboxProvider",
+        FailingDockerSandboxProvider,
+    )
+
+    result = i_sandbox_start(tmp_path)
+
+    assert result.provider_name == "local"
+    assert result.started is True
+    assert result.handle is not None
+    assert isinstance(result.handle, LocalSandboxProvider)
+
+
+def test_sandbox_start_returns_clear_failure_from_real_docker_image_check(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    dockerfile_path = tmp_path / "Dockerfile"
+    dockerfile_path.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    image_name = "missing-ai-code-test:latest"
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "sandbox_mode",
+        "docker",
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_image_name",
+        image_name,
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "ralph_dockerfile_path",
+        dockerfile_path,
+    )
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        assert list(command) == ["docker", "image", "inspect", image_name]
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout="",
+            stderr=f"No such image: {image_name}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    result = i_sandbox_start(tmp_path)
+
+    assert result.working_directory == tmp_path
+    assert result.provider_name == "docker"
+    assert result.started is False
+    assert result.handle is None
+    assert "Docker sandbox startup failed" in result.message
+    assert image_name in result.message
+    assert "Build it with:" in result.message
+    assert f"No such image: {image_name}" in result.message
 
 
 def test_sandbox_start_returns_clear_failure_when_docker_image_missing(
