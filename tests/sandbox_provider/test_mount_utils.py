@@ -113,20 +113,22 @@ def test_mountutils_patch_git_mounts_for_windows_still_returns_git_patch_mounts(
     worktree_git_dir.mkdir(parents=True)
 
     git_file_path = worktree_path / ".git"
+    windows_gitdir_path = str(worktree_git_dir).replace("/", "\\")
+    original_gitdir_text = f"gitdir: {windows_gitdir_path}\n"
     git_file_path.write_text(
-        f"gitdir: {str(worktree_git_dir).replace('/', '\\')}\n",
+        original_gitdir_text,
         encoding="utf-8",
     )
 
     git_mounts = [
         DockerMount(
             host_path=parent_git_dir,
-            sandbox_path="/workspace/.git",
+            sandbox_path=f"{SANDBOX_REPO_DIR}/.git",
             readonly=False,
         ),
         DockerMount(
             host_path=git_file_path,
-            sandbox_path="/workspace/.git",
+            sandbox_path=f"{SANDBOX_REPO_DIR}/.git",
             readonly=True,
         ),
     ]
@@ -140,8 +142,121 @@ def test_mountutils_patch_git_mounts_for_windows_still_returns_git_patch_mounts(
     assert len(result) == 2
     assert result[0].host_path == parent_git_dir
     assert result[0].sandbox_path == PARENT_GIT_SANDBOX_DIR
-    assert result[1].sandbox_path == "/workspace/.git"
+    assert result[1].sandbox_path == f"{SANDBOX_REPO_DIR}/.git"
     assert result[1].readonly is True
     assert result[1].host_path.read_text(encoding="utf-8") == (
         "gitdir: /.ralph-parent-git/worktrees/ralph-issue-31\n"
     )
+    assert git_file_path.read_text(encoding="utf-8") == original_gitdir_text
+
+
+def test_mountutils_patch_git_mounts_for_windows_corrects_linked_worktree_git_file(
+    tmp_path,
+) -> None:
+    worktree_path = (
+        tmp_path / "repo" / ".ai_coder" / "ai_coder_worktrees" / "ralph-issue-032"
+    )
+    parent_git_dir = tmp_path / "repo" / ".git"
+    worktree_git_dir = parent_git_dir / "worktrees" / "ralph-issue-032"
+    windows_gitdir_path = str(worktree_git_dir).replace("/", "\\")
+    original_gitdir_text = f"gitdir: {windows_gitdir_path}\n"
+
+    worktree_path.mkdir(parents=True)
+    worktree_git_dir.mkdir(parents=True)
+
+    git_file_path = worktree_path / ".git"
+    git_file_path.write_text(original_gitdir_text, encoding="utf-8")
+
+    git_mounts = [
+        DockerMount(
+            host_path=parent_git_dir,
+            sandbox_path=str(parent_git_dir),
+            readonly=False,
+        ),
+    ]
+
+    result = i_mountutils_patch_git_mounts_for_windows(
+        git_mounts=git_mounts,
+        worktree_host_path=worktree_path,
+        platform_name="Windows",
+    )
+
+    assert len(result) == 2
+    assert result[0].host_path == parent_git_dir
+    assert result[0].sandbox_path == PARENT_GIT_SANDBOX_DIR
+    assert result[0].readonly is False
+
+    corrected_git_mount = result[1]
+    assert corrected_git_mount.host_path != git_file_path
+    assert corrected_git_mount.sandbox_path == f"{SANDBOX_REPO_DIR}/.git"
+    assert corrected_git_mount.readonly is True
+
+    corrected_git_text = corrected_git_mount.host_path.read_text(encoding="utf-8")
+    assert corrected_git_text == (
+        "gitdir: /.ralph-parent-git/worktrees/ralph-issue-032\n"
+    )
+    assert "C:/" not in corrected_git_text
+    assert "\\" not in corrected_git_text
+    assert str(parent_git_dir).replace("\\", "/") not in corrected_git_text
+    assert git_file_path.read_text(encoding="utf-8") == original_gitdir_text
+
+
+def test_mountutils_patch_git_mounts_for_non_windows_returns_original_mounts(
+    tmp_path,
+) -> None:
+    worktree_path = tmp_path / "repo" / "worktree"
+    parent_git_dir = tmp_path / "repo" / ".git"
+    worktree_git_dir = parent_git_dir / "worktrees" / "ralph-issue-032"
+
+    worktree_path.mkdir(parents=True)
+    worktree_git_dir.mkdir(parents=True)
+    (worktree_path / ".git").write_text(
+        f"gitdir: {worktree_git_dir}\n",
+        encoding="utf-8",
+    )
+
+    git_mounts = [
+        DockerMount(
+            host_path=parent_git_dir,
+            sandbox_path=str(parent_git_dir),
+        ),
+    ]
+
+    result = i_mountutils_patch_git_mounts_for_windows(
+        git_mounts=git_mounts,
+        worktree_host_path=worktree_path,
+        platform_name="linux",
+    )
+
+    assert result == git_mounts
+
+
+def test_mountutils_patch_git_mounts_for_real_git_directory_does_not_add_mounts(
+    tmp_path,
+) -> None:
+    worktree_path = tmp_path / "repo" / "worktree"
+    real_git_dir = worktree_path / ".git"
+    real_git_dir.mkdir(parents=True)
+
+    result = i_mountutils_patch_git_mounts_for_windows(
+        git_mounts=[],
+        worktree_host_path=worktree_path,
+        platform_name="Windows",
+    )
+
+    assert result == []
+
+
+def test_mountutils_patch_git_mounts_for_missing_git_entry_does_not_crash(
+    tmp_path,
+) -> None:
+    worktree_path = tmp_path / "repo" / "worktree"
+    worktree_path.mkdir(parents=True)
+
+    result = i_mountutils_patch_git_mounts_for_windows(
+        git_mounts=[],
+        worktree_host_path=worktree_path,
+        platform_name="Windows",
+    )
+
+    assert result == []
