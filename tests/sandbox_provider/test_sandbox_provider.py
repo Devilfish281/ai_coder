@@ -4,7 +4,13 @@ import sys
 from pathlib import Path
 import pytest
 
-from ai_coder.sandbox_provider.mount_utils import i_mountutils_to_docker_host_path
+import ai_coder.sandbox_provider.mount_utils as mount_utils_module
+from ai_coder.sandbox_provider.mount_utils import (
+    PARENT_GIT_SANDBOX_DIR,
+    SANDBOX_REPO_DIR,
+    i_mountutils_to_docker_host_path,
+)
+
 import ai_coder.sandbox_provider.sandbox_provider as sandbox_provider_module
 from ai_coder.sandbox_provider import (
     CommandResult,
@@ -430,9 +436,7 @@ def test_docker_sandbox_provider_runs_command_with_bind_mount_and_workspace(
         platform_name="windows",
     )
 
-    assert (
-        docker_run_command[volume_index + 1] == f"{expected_host_path}:/workspace"
-    )  #  Changed Code
+    assert docker_run_command[volume_index + 1] == f"{expected_host_path}:/workspace"
 
     assert docker_run_command[workdir_index + 1] == "/workspace"
     assert docker_run_command[image_index + 1 :] == [
@@ -1295,3 +1299,237 @@ def test_sandbox_start_returns_clear_failure_when_docker_image_missing(
     assert "Docker sandbox startup failed" in result.message
     assert image_name in result.message
     assert build_command in result.message
+
+
+def test_docker_sandbox_provider_mounts_corrected_git_metadata_for_windows_worktree(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    repo_path = tmp_path / "repo"
+    worktree_path = repo_path / ".ai_coder" / "ai_coder_worktrees" / "ralph-issue-032"
+    parent_git_dir = repo_path / ".git"
+    worktree_git_dir = parent_git_dir / "worktrees" / "ralph-issue-032"
+    windows_gitdir_path = str(worktree_git_dir).replace("/", "\\")
+
+    worktree_path.mkdir(parents=True)
+    worktree_git_dir.mkdir(parents=True)
+    (worktree_path / ".git").write_text(
+        f"gitdir: {windows_gitdir_path}\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="git status output",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        mount_utils_module.platform,
+        "system",
+        lambda: "Windows",
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=worktree_path,
+        host_repo_path=repo_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["git", "status", "--short"])
+
+    docker_run_command = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ][0]
+    volume_specs = [
+        docker_run_command[index + 1]
+        for index, value in enumerate(docker_run_command)
+        if value == "-v"
+    ]
+    expected_worktree_host_path = i_mountutils_to_docker_host_path(
+        worktree_path,
+        platform_name="windows",
+    )
+    expected_parent_git_host_path = i_mountutils_to_docker_host_path(
+        parent_git_dir,
+        platform_name="windows",
+    )
+    corrected_git_mount_suffix = f":{SANDBOX_REPO_DIR}/.git:ro"
+    corrected_git_mounts = [
+        volume_spec
+        for volume_spec in volume_specs
+        if volume_spec.endswith(corrected_git_mount_suffix)
+    ]
+    workdir_index = docker_run_command.index("-w")
+    image_index = docker_run_command.index(image_name)
+
+    assert result.succeeded is True
+    assert f"{expected_worktree_host_path}:{SANDBOX_REPO_DIR}" in volume_specs
+    assert f"{expected_parent_git_host_path}:{PARENT_GIT_SANDBOX_DIR}" in volume_specs
+    assert len(corrected_git_mounts) == 1
+
+    corrected_git_host_path = corrected_git_mounts[0].rsplit(
+        corrected_git_mount_suffix,
+        1,
+    )[0]
+    corrected_git_text = Path(corrected_git_host_path).read_text(encoding="utf-8")
+
+    assert corrected_git_text == (
+        "gitdir: /.ralph-parent-git/worktrees/ralph-issue-032\n"
+    )
+    assert docker_run_command[workdir_index + 1] == SANDBOX_REPO_DIR
+    assert docker_run_command[image_index + 1 :] == ["git", "status", "--short"]
+
+
+def test_docker_sandbox_provider_keeps_host_git_state_inspectable_after_fake_docker_write(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    repo_path = tmp_path / "repo"
+    worktree_path = tmp_path / "worktree"
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    changed_file = worktree_path / "changed_by_fake_docker.txt"
+    original_subprocess_run = subprocess.run  #  Added Code
+
+    repo_path.mkdir()
+    _run_git_command(repo_path, "init")
+    _run_git_command(repo_path, "config", "user.name", "RALPH Test")
+    _run_git_command(repo_path, "config", "user.email", "ralph-test@example.test")
+    (repo_path / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    _run_git_command(repo_path, "add", "README.md")
+    _run_git_command(repo_path, "commit", "-m", "Initial commit")
+    _run_git_command(
+        repo_path,
+        "worktree",
+        "add",
+        "-b",
+        "ralph-issue-032-test",
+        str(worktree_path),
+    )
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["git", "-C", str(worktree_path)]:  #  Added Code
+            return original_subprocess_run(  #  Added Code
+                command,  #  Added Code
+                capture_output=capture_output,  #  Added Code
+                text=text,  #  Added Code
+                check=check,  #  Added Code
+            )  #  Added Code
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            changed_file.write_text(
+                "written by fake docker command",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="fake docker wrote file",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=worktree_path,
+        host_repo_path=repo_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["python", "-c", "write file"])
+    status_result = _run_git_command(worktree_path, "status", "--porcelain")
+
+    assert result.succeeded is True
+    assert changed_file.exists()
+    assert "?? changed_by_fake_docker.txt" in status_result.stdout
+
+
+def _run_git_command(
+    repo_path: Path,
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
+    completed_process = subprocess.run(
+        ["git", "-C", str(repo_path), *arguments],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed_process.returncode == 0, (
+        f"Command failed: git -C {repo_path} {' '.join(arguments)}\n"
+        f"stdout:\n{completed_process.stdout}\n"
+        f"stderr:\n{completed_process.stderr}"
+    )
+
+    return completed_process

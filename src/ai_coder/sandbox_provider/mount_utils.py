@@ -56,12 +56,13 @@ def i_mountutils_patch_git_mounts_for_windows(
     platform_name: str | None = None,
 ) -> list[DockerMount]:
     """Patch Git mounts so Windows Git worktrees work inside Linux Docker."""
-    active_platform = platform_name or platform.system().lower()
 
-    if active_platform not in {"windows", "win32"}:
+    resolved_worktree_host_path = Path(worktree_host_path)
+
+    if not _is_windows_platform(platform_name):  #  Changed Code
         return git_mounts
 
-    git_entry_path = worktree_host_path / ".git"
+    git_entry_path = resolved_worktree_host_path / ".git"  #  Changed Code
 
     if not git_entry_path.exists():
         return git_mounts
@@ -80,9 +81,13 @@ def i_mountutils_patch_git_mounts_for_windows(
     gitdir_path = git_entry_text.removeprefix("gitdir:").strip()
     parsed_gitdir = _parse_gitdir_path(gitdir_path)
 
-    corrected_git_file_path = _create_corrected_git_file(parsed_gitdir.worktree_name)
+    corrected_git_file_path = _create_corrected_git_file(
+        parsed_gitdir.worktree_name,
+    )
 
-    normalized_parent_git_dir = _normalize_path_text(parsed_gitdir.parent_git_dir)
+    normalized_parent_git_dir = _normalize_path_text(
+        parsed_gitdir.parent_git_dir,
+    )
     normalized_git_file_path = _normalize_path_text(str(git_entry_path))
 
     corrected_mounts: list[DockerMount] = []
