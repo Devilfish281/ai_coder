@@ -554,14 +554,19 @@ class DockerSandboxProvider:
             if not cleaned_name:
                 continue
 
-            env_value = os.getenv(cleaned_name, "").strip()
+            raw_env_value = os.getenv(cleaned_name)
 
-            if not env_value:
+            if raw_env_value is None:
                 raise ValueError(
                     f"Missing required Docker secret env var: {cleaned_name}"
                 )
 
-            secret_env_args.extend(["-e", f"{cleaned_name}={env_value}"])
+            cleaned_env_value = raw_env_value.strip()
+
+            if not cleaned_env_value:
+                raise ValueError(f"Docker secret env var is empty: {cleaned_name}")
+
+            secret_env_args.extend(["-e", f"{cleaned_name}={cleaned_env_value}"])
 
         logger.debug(
             "Built Docker secret env args. secret_env_names=%s",
