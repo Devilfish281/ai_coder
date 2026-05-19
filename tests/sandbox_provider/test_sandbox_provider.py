@@ -518,15 +518,15 @@ def test_docker_sandbox_provider_keeps_normal_env_allowlist_behavior_with_docker
     build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
 
     monkeypatch.delenv("PYTHONUNBUFFERED", raising=False)
-    monkeypatch.setenv("RALPH_NORMAL_ENV_030", "visible-value-030")
-    monkeypatch.delenv("RALPH_MISSING_ENV_030", raising=False)
+    monkeypatch.setenv("RALPH_NORMAL_ENV_033", "visible-value-033")
+    monkeypatch.delenv("RALPH_MISSING_ENV_033", raising=False)
     monkeypatch.setattr(
         sandbox_provider_module.setup_config,
         "docker_env_allowlist",
         (
             "PYTHONUNBUFFERED",
-            "RALPH_NORMAL_ENV_030",
-            "RALPH_MISSING_ENV_030",
+            "RALPH_NORMAL_ENV_033",
+            "RALPH_MISSING_ENV_033",
         ),
     )
     monkeypatch.setattr(
@@ -597,9 +597,9 @@ def test_docker_sandbox_provider_keeps_normal_env_allowlist_behavior_with_docker
 
     assert result.succeeded is True
     assert "PYTHONUNBUFFERED=1" in env_values
-    assert "RALPH_NORMAL_ENV_030=visible-value-030" in env_values
+    assert "RALPH_NORMAL_ENV_033=visible-value-033" in env_values
     assert not any(
-        env_value.startswith("RALPH_MISSING_ENV_030=") for env_value in env_values
+        env_value.startswith("RALPH_MISSING_ENV_033=") for env_value in env_values
     )
 
 

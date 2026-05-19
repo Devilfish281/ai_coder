@@ -58,6 +58,33 @@ def _fresh_config():
     return c_setup_config.get_instance()
 
 
+def test_setup_config_default_docker_env_allowlist_is_small(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    config = _fresh_config()
+
+    assert config.docker_env_allowlist == ("PYTHONUNBUFFERED",)
+    assert "OPENAI_API_KEY" not in config.docker_env_allowlist
+    assert "ANTHROPIC_API_KEY" not in config.docker_env_allowlist
+    assert "GH_TOKEN" not in config.docker_env_allowlist
+
+
+def test_setup_config_default_secret_env_allowlist_is_empty(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    config = _fresh_config()
+
+    assert config.docker_secret_env_allowlist == ()
+
+
 def test_setup_config_uses_issue_dir_and_file_name_first(monkeypatch, tmp_path) -> None:
     issue_dir = tmp_path / "issues"
     issue_file_name = "local_issue.md"
