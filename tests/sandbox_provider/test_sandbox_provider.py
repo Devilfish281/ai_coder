@@ -707,14 +707,14 @@ def test_docker_sandbox_provider_keeps_secret_env_allowlist_behavior_with_docker
     assert f"{secret_name}=<redacted>" in redacted_command
 
 
-def test_docker_sandbox_provider_missing_secret_env_still_raises_when_building_docker_command(
+def test_docker_sandbox_provider_missing_secret_env_raises_when_building_docker_command(  #  Changed Code
     monkeypatch,
     tmp_path,
 ) -> None:
     commands: list[list[str]] = []
     image_name = "ai-code-test:latest"
     build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
-    secret_name = "RALPH_MISSING_SECRET_ENV_030"
+    secret_name = "RALPH_MISSING_SECRET_ENV_034"  #  Changed Code
 
     monkeypatch.setattr(
         sandbox_provider_module.setup_config,
@@ -769,10 +769,146 @@ def test_docker_sandbox_provider_missing_secret_env_still_raises_when_building_d
     )
 
     with pytest.raises(
-        ValueError, match=f"Missing required Docker secret env var: {secret_name}"
+        ValueError,
+        match=f"Missing required Docker secret env var: {secret_name}",
     ):
         provider.i_sandboxhandle_run(["python", "-c", "print('secret')"])
 
+    assert commands == [["docker", "image", "inspect", image_name]]
+
+
+def test_docker_sandbox_provider_empty_secret_env_raises_when_building_docker_command(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    secret_name = "RALPH_EMPTY_SECRET_ENV_034"
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (secret_name,),
+    )
+    monkeypatch.setenv(secret_name, "   ")
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=f"Docker secret env var is empty: {secret_name}",
+    ):
+        provider.i_sandboxhandle_run(["python", "-c", "print('secret')"])
+
+    assert commands == [["docker", "image", "inspect", image_name]]
+
+
+def test_docker_sandbox_provider_does_not_validate_secret_env_during_construction(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    secret_name = "RALPH_CONSTRUCTION_SECRET_ENV_034"
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (secret_name,),
+    )
+    monkeypatch.delenv(secret_name, raising=False)
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    assert provider.image_name == image_name
     assert commands == [["docker", "image", "inspect", image_name]]
 
 
@@ -1429,7 +1565,7 @@ def test_docker_sandbox_provider_keeps_host_git_state_inspectable_after_fake_doc
     image_name = "ai-code-test:latest"
     build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
     changed_file = worktree_path / "changed_by_fake_docker.txt"
-    original_subprocess_run = subprocess.run  #  Added Code
+    original_subprocess_run = subprocess.run
 
     repo_path.mkdir()
     _run_git_command(repo_path, "init")
@@ -1459,13 +1595,13 @@ def test_docker_sandbox_provider_keeps_host_git_state_inspectable_after_fake_doc
         assert text is True
         assert check is False
 
-        if command_parts[:3] == ["git", "-C", str(worktree_path)]:  #  Added Code
-            return original_subprocess_run(  #  Added Code
-                command,  #  Added Code
-                capture_output=capture_output,  #  Added Code
-                text=text,  #  Added Code
-                check=check,  #  Added Code
-            )  #  Added Code
+        if command_parts[:3] == ["git", "-C", str(worktree_path)]:
+            return original_subprocess_run(
+                command,
+                capture_output=capture_output,
+                text=text,
+                check=check,
+            )
 
         if command_parts[:3] == ["docker", "image", "inspect"]:
             return subprocess.CompletedProcess(

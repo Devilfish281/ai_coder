@@ -83,6 +83,9 @@ def test_setup_config_default_secret_env_allowlist_is_empty(
     config = _fresh_config()
 
     assert config.docker_secret_env_allowlist == ()
+    assert "OPENAI_API_KEY" not in config.docker_secret_env_allowlist
+    assert "ANTHROPIC_API_KEY" not in config.docker_secret_env_allowlist
+    assert "GH_TOKEN" not in config.docker_secret_env_allowlist
 
 
 def test_setup_config_uses_issue_dir_and_file_name_first(monkeypatch, tmp_path) -> None:
