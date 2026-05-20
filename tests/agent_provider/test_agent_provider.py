@@ -1,12 +1,15 @@
 # tests/agent_provider/test_agent_provider.py
 import json
 
+import pytest
+
 from ai_coder.agent_provider import (
     COMPLETE_TOKEN,
     AgentResponse,
     CodexProvider,
     FakeTestAgentProvider,
     MockAgentProvider,
+    i_agent_provider_create,
 )
 from ai_coder.sandbox_provider import CommandResult
 
@@ -327,3 +330,108 @@ def test_codex_provider_returns_error_on_nonzero_exit(tmp_path) -> None:
     assert result.error == "codex failed"
     assert provider.prompts == ["Fix issue #37"]
     assert provider.run_count == 1
+
+
+def test_agent_provider_create_builds_fake_provider_for_mock(tmp_path) -> None:
+    sandbox_handle = FakeSandboxHandle(
+        CommandResult(
+            stdout="Fake test agent completed.\n<promise>COMPLETE</promise>\n",
+            stderr="",
+            exit_code=0,
+        )
+    )
+
+    provider = i_agent_provider_create(
+        provider_name="mock",
+        sandbox_handle=sandbox_handle,
+        worktree_path=tmp_path,
+    )
+
+    assert isinstance(provider, FakeTestAgentProvider)
+
+
+def test_agent_provider_create_builds_codex_provider_for_codex(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex completed.\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+
+    provider = i_agent_provider_create(
+        provider_name="codex",
+        sandbox_handle=sandbox_handle,
+        worktree_path=tmp_path,
+        codex_command="codex",
+    )
+
+    assert isinstance(provider, CodexProvider)
+
+
+def test_agent_provider_create_rejects_unknown_provider(tmp_path) -> None:
+    sandbox_handle = FakeSandboxHandle(
+        CommandResult(
+            stdout="",
+            stderr="",
+            exit_code=0,
+        )
+    )
+
+    with pytest.raises(ValueError, match="Unsupported agent provider") as error_info:
+        i_agent_provider_create(
+            provider_name="unknown",
+            sandbox_handle=sandbox_handle,
+            worktree_path=tmp_path,
+        )
+
+    assert "mock" in str(error_info.value)
+    assert "codex" in str(error_info.value)
+
+
+def test_agent_provider_create_fake_provider_runs_through_sandbox(tmp_path) -> None:
+    sandbox_handle = FakeSandboxHandle(
+        CommandResult(
+            stdout="Fake test agent completed.\n<promise>COMPLETE</promise>\n",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = i_agent_provider_create(
+        provider_name="mock",
+        sandbox_handle=sandbox_handle,
+        worktree_path=tmp_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #38")
+
+    assert result.error is None
+    assert COMPLETE_TOKEN in result.output
+    assert len(sandbox_handle.commands) == 1
+
+
+def test_agent_provider_create_codex_keeps_prompt_out_of_command_args(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex done\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = i_agent_provider_create(
+        provider_name="codex",
+        sandbox_handle=sandbox_handle,
+        worktree_path=tmp_path,
+        codex_command="codex",
+    )
+    prompt = "Issue body with shell-looking text !`echo unsafe` && whoami"
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+
+    assert result.error is None
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert prompt not in command
+    assert prompt not in command_text

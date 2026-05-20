@@ -65,8 +65,7 @@ from ai_coder.display import (
 from ai_coder.agent_provider import (
     AgentProvider,
     COMPLETE_TOKEN,
-    FakeTestAgentProvider,
-    MockAgentProvider,
+    i_agent_provider_create,
 )
 
 from ai_coder.completion_detector import i_completion_detector_detect
@@ -715,7 +714,7 @@ def _build_default_agent_provider(
     sandbox_handle: Any,
 ) -> AgentProvider:
     """
-    Return the caller-provided agent provider or build the default fake provider.
+    Return the caller-provided agent provider or build one through the public seam.
 
     :param agent_provider: Optional provider supplied by tests or callers.
     :type agent_provider: AgentProvider | None
@@ -733,9 +732,42 @@ def _build_default_agent_provider(
         return agent_provider
 
     if sandbox_handle is None:
-        raise ValueError("sandbox_handle is required for the default fake test agent.")
+        raise ValueError("sandbox_handle is required for the default agent provider.")
 
-    return FakeTestAgentProvider(sandbox_handle)
+    worktree_path = _worktree_path_from_sandbox_handle(sandbox_handle)
+
+    return i_agent_provider_create(
+        provider_name=setup_config.default_agent,
+        sandbox_handle=sandbox_handle,
+        worktree_path=worktree_path,
+        codex_command=setup_config.codex_command,
+    )
+
+
+def _worktree_path_from_sandbox_handle(sandbox_handle: Any) -> Path:
+    """
+    Return the worktree path stored on a sandbox handle.
+
+    :param sandbox_handle: Sandbox handle created by the sandbox provider.
+    :type sandbox_handle: Any
+    :return: Host-side worktree path for command-based providers.
+    :rtype: Path
+    :raises ValueError: If the sandbox handle does not expose a usable worktree path.
+
+    :meta private:
+    """
+
+    raw_worktree_path = getattr(sandbox_handle, "worktree_path", None)
+
+    if raw_worktree_path is None:
+        raw_worktree_path = getattr(sandbox_handle, "working_directory", None)
+
+    if raw_worktree_path is None:
+        raise ValueError(
+            "sandbox_handle must expose worktree_path or working_directory."
+        )
+
+    return Path(raw_worktree_path)
 
 
 def _display_project_setup_failure(

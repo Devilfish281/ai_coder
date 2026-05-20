@@ -43,6 +43,10 @@ DEFAULT_TEST_COMMAND = "poetry run pytest"
 
 
 DEFAULT_COMMIT_MESSAGE_TEMPLATE = "RALPH: issue #{issue_number} - {issue_title}"
+
+
+DEFAULT_PROVIDER_ENV_ALLOWLIST: tuple[str, ...] = ()
+DEFAULT_PROVIDER_SECRET_ENV_ALLOWLIST: tuple[str, ...] = ()
 ###############################################################################
 # Paths
 ###############################################################################
@@ -58,6 +62,30 @@ DEFAULT_RALPH_DOCKERFILE_PATH = DEFAULT_RALPH__PATH / ".ai_coder" / "Dockerfile"
 DEFAULT_DOCKER_BUILD_COMMAND = (
     "docker build -f .ai_coder/Dockerfile " "-t ai-code-ralph-test-runtime:latest ."
 )
+
+
+##############################################################################
+# Helper Functions
+###############################################################################
+def _merge_env_name_allowlists(*allowlists: object) -> tuple[str, ...]:  #  Added Code
+    merged_names: list[str] = []  #  Added Code
+    seen_names: set[str] = set()  #  Added Code
+
+    for allowlist in allowlists:  #  Added Code
+        raw_names = (
+            (allowlist,) if isinstance(allowlist, str) else allowlist or ()
+        )  #  Added Code
+
+        for env_name in raw_names:  #  Added Code
+            cleaned_name = str(env_name).strip()  #  Added Code
+
+            if not cleaned_name or cleaned_name in seen_names:  #  Added Code
+                continue  #  Added Code
+
+            seen_names.add(cleaned_name)  #  Added Code
+            merged_names.append(cleaned_name)  #  Added Code
+
+    return tuple(merged_names)  #  Added Code
 
 
 class c_setup_config(BaseModel):
@@ -123,6 +151,28 @@ class c_setup_config(BaseModel):
         description=(
             "Secret-like environment variable names allowed to pass into Docker. "
             "Empty by default for the first Docker tracer bullet."
+        ),
+    )
+
+    provider_env_allowlist: tuple[str, ...] = Field(
+        default_factory=lambda: c_setup_config.env_tuple(
+            "RALPH_PROVIDER_ENV_ALLOWLIST",
+            DEFAULT_PROVIDER_ENV_ALLOWLIST,
+        ),
+        description=(
+            "Provider-specific normal environment variable names allowed to "
+            "flow into sandbox commands. Empty by default."
+        ),
+    )
+
+    provider_secret_env_allowlist: tuple[str, ...] = Field(
+        default_factory=lambda: c_setup_config.env_tuple(
+            "RALPH_PROVIDER_SECRET_ENV_ALLOWLIST",
+            DEFAULT_PROVIDER_SECRET_ENV_ALLOWLIST,
+        ),
+        description=(
+            "Provider-specific secret environment variable names allowed to "
+            "flow into sandbox commands. Empty by default."
         ),
     )
 
@@ -281,6 +331,21 @@ class c_setup_config(BaseModel):
             raise ValueError(f"{name} must be an integer.") from error
 
     @staticmethod
+    def env_tuple(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+        raw = os.getenv(name)
+
+        if raw is None or not raw.strip():
+            return default
+
+        return tuple(
+            cleaned_value
+            for cleaned_value in (
+                value.strip().strip("'\"") for value in raw.replace(";", ",").split(",")
+            )
+            if cleaned_value
+        )
+
+    @staticmethod
     def resolve_github_issue_path() -> Path:
         base_path = Path(
             c_setup_config.get_env(
@@ -348,7 +413,7 @@ class c_setup_config(BaseModel):
     def i_setup_config_secret_values(self) -> tuple[str, ...]:
         secret_values: list[str] = []
 
-        for env_name in self.docker_secret_env_allowlist:
+        for env_name in self._configured_secret_env_names():
             cleaned_env_name = str(env_name).strip()
 
             if not cleaned_env_name:
@@ -361,6 +426,12 @@ class c_setup_config(BaseModel):
                 secret_values.append(cleaned_secret_value)
 
         return tuple(secret_values)
+
+    def _configured_secret_env_names(self) -> tuple[str, ...]:
+        return _merge_env_name_allowlists(
+            self.docker_secret_env_allowlist,
+            self.provider_secret_env_allowlist,
+        )
 
     ############################################################################
     # Validation and Utility Functions
@@ -479,6 +550,8 @@ class c_setup_config(BaseModel):
             "docker_build_command": self.get_docker_build_command(),
             "docker_env_allowlist": list(self.docker_env_allowlist),
             "docker_secret_env_allowlist": list(self.docker_secret_env_allowlist),
+            "provider_env_allowlist": list(self.provider_env_allowlist),
+            "provider_secret_env_allowlist": list(self.provider_secret_env_allowlist),
             "project_name": self.project_name,
             "repo_path": str(self.repo_path),
             "github_repo": self.github_repo,
@@ -518,6 +591,8 @@ class c_setup_config(BaseModel):
             f"repo_path={str(self.repo_path)!r}, "
             f"github_repo={self.github_repo!r}, "
             f"default_agent={self.default_agent!r}, "
+            f"provider_env_allowlist={self.provider_env_allowlist!r}, "
+            f"provider_secret_env_allowlist={self.provider_secret_env_allowlist!r}, "
             f"codex_command={self.codex_command!r}, "
             f"dry_run={self.dry_run!r}, "
             f"test_command={self.test_command!r}, "

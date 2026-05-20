@@ -3364,3 +3364,197 @@ def test_ralph_blocks_and_preserves_worktree_when_docker_sandbox_start_fails(
             "has_uncommitted_changes": None,
         }
     ]
+
+
+def _patch_successful_repository_context_discover(monkeypatch, tmp_path) -> None:
+    def fake_repository_context_discover(repo_path):
+        return RepositoryContextResult(
+            repo_path=tmp_path,
+            package_manager="poetry",
+            test_command="poetry run pytest",
+            test_command_source="configured",
+            project_files=("pyproject.toml", "poetry.lock", "src/", "tests/"),
+            useful_signals=("Python project", "Uses Poetry", "Uses pytest"),
+            prompt_summary="Repository context summary for provider seam tests.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_context_discover",
+        fake_repository_context_discover,
+    )
+
+
+def _patch_successful_project_setup(monkeypatch) -> None:
+    def fake_project_setup_run(worktree_path, sandbox_handle):
+        return ProjectSetupResult(
+            poetry_project=True,
+            install_ran=True,
+            install_passed=True,
+            baseline_tests_ran=True,
+            baseline_tests_passed=True,
+            blocked=False,
+            install_command=("poetry", "install"),
+            install_stdout="poetry install passed",
+            install_stderr="",
+            install_exit_code=0,
+            baseline_test_command=("poetry", "run", "pytest"),
+            baseline_test_stdout="baseline tests passed",
+            baseline_test_stderr="",
+            baseline_test_exit_code=0,
+            message="Poetry setup passed.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_project_setup_run",
+        fake_project_setup_run,
+    )
+
+
+def test_ralph_displays_provider_output_summary_without_prompt_body(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    prompt_secret_text = "SECRET_PROMPT_BODY_SHOULD_NOT_DISPLAY_038"
+    provider_output = (
+        "Visible provider output for display.\n<promise>COMPLETE</promise>"
+    )
+    display = SilentDisplay()
+    provider = MockAgentProvider(responses=[provider_output])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=38,
+                title="Add agent provider seam",
+                body=f"Do the provider seam work. {prompt_secret_text}",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert "Agent provider: MockAgentProvider" in display_text
+    assert "Agent completed: True" in display_text
+    assert (
+        "Agent final output: Visible provider output for display. <promise>COMPLETE</promise>"
+        in display_text
+    )
+    assert prompt_secret_text not in display_text
+
+
+def test_ralph_uses_agent_provider_create_seam_when_no_provider_is_injected(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+    sandbox_handle = FakeRalphAgentSandboxHandle(
+        worktree_path,
+        CommandResult(
+            stdout="sandbox command passed",
+            stderr="",
+            exit_code=0,
+        ),
+    )
+    seam_calls: list[dict[str, object]] = []
+    fake_provider = MockAgentProvider(
+        responses=["Provider seam completed.\n<promise>COMPLETE</promise>"]
+    )
+
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "default_agent",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "codex_command",
+        "codex",
+    )
+
+    def fake_sandbox_start(working_directory):
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started fake sandbox for provider seam test.",
+            handle=sandbox_handle,
+        )
+
+    def fake_agent_provider_create(
+        provider_name,
+        sandbox_handle,
+        worktree_path,
+        codex_command="",
+        final_output_path=None,
+    ):
+        seam_calls.append(
+            {
+                "provider_name": provider_name,
+                "sandbox_handle": sandbox_handle,
+                "worktree_path": worktree_path,
+                "codex_command": codex_command,
+                "final_output_path": final_output_path,
+            }
+        )
+        return fake_provider
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_agent_provider_create",
+        fake_agent_provider_create,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=38,
+                title="Add agent provider seam",
+                body="RALPH should create providers through the public seam.",
+                labels=("tracer bullet",),
+            )
+        ],
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert len(seam_calls) == 1
+    assert seam_calls[0]["provider_name"] == "codex"
+    assert seam_calls[0]["sandbox_handle"] is sandbox_handle
+    assert seam_calls[0]["worktree_path"] == worktree_path
+    assert seam_calls[0]["codex_command"] == "codex"
+    assert seam_calls[0]["final_output_path"] is None
+    assert fake_provider.prompts
+    assert (
+        "RALPH should create providers through the public seam."
+        in fake_provider.prompts[0]
+    )

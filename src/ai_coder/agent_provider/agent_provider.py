@@ -25,6 +25,41 @@ class AgentSandboxHandle(Protocol):
         raise NotImplementedError
 
 
+def i_agent_provider_create(
+    provider_name: str,
+    sandbox_handle: AgentSandboxHandle,
+    worktree_path: str | Path,
+    codex_command: str = "",
+    final_output_path: str | Path | None = None,
+) -> AgentProvider:
+    """Create an agent provider from the public provider-selection seam.
+
+    RALPH should call this seam instead of constructing provider classes
+    directly. Provider-specific command construction stays inside each provider.
+    """
+
+    cleaned_provider_name = str(provider_name).strip().lower()
+
+    if sandbox_handle is None:
+        raise ValueError("sandbox_handle is required to create an agent provider.")
+
+    if cleaned_provider_name == "mock":
+        return FakeTestAgentProvider(sandbox_handle=sandbox_handle)
+
+    if cleaned_provider_name == "codex":
+        return CodexProvider(
+            sandbox_handle=sandbox_handle,
+            codex_command=codex_command,
+            worktree_path=worktree_path,
+            final_output_path=final_output_path,
+        )
+
+    raise ValueError(
+        "Unsupported agent provider "
+        f"{provider_name!r}. Supported providers are: mock, codex."
+    )
+
+
 @dataclass(frozen=True)
 class CodexCommandContract:
     codex_command: str

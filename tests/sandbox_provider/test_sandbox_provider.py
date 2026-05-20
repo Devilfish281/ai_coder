@@ -1895,6 +1895,308 @@ def test_docker_sandbox_provider_keeps_host_git_state_inspectable_after_fake_doc
     assert "?? changed_by_fake_docker.txt" in status_result.stdout
 
 
+def test_docker_sandbox_provider_merges_provider_normal_env_allowlist(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    provider_env_name = "RALPH_PROVIDER_NORMAL_ENV_038"
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        ("PYTHONUNBUFFERED",),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_env_allowlist",
+        (provider_env_name, "RALPH_PROVIDER_MISSING_ENV_038"),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_secret_env_allowlist",
+        (),
+    )
+    monkeypatch.setenv(provider_env_name, "provider-visible-value-038")
+    monkeypatch.delenv("RALPH_PROVIDER_MISSING_ENV_038", raising=False)
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="provider env command passed",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["python", "-c", "print('provider env')"])
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    env_values = [
+        docker_run_command[index + 1]
+        for index, command_part in enumerate(docker_run_command)
+        if command_part == "-e"
+    ]
+
+    assert result.succeeded is True
+    assert "PYTHONUNBUFFERED=1" in env_values
+    assert f"{provider_env_name}=provider-visible-value-038" in env_values
+    assert not any(
+        env_value.startswith("RALPH_PROVIDER_MISSING_ENV_038=")
+        for env_value in env_values
+    )
+
+
+def test_docker_sandbox_provider_merges_provider_secret_env_allowlist_for_redaction(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    redaction_calls: list[tuple[list[str], tuple[str, ...]]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    docker_secret_name = "RALPH_DOCKER_SECRET_ENV_038"
+    provider_secret_name = "RALPH_PROVIDER_SECRET_ENV_038"
+    docker_secret_value = "docker-secret-value-038"
+    provider_secret_value = "provider-secret-value-038"
+    original_redact = sandbox_provider_module.i_dockercommand_redact
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (docker_secret_name,),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_secret_env_allowlist",
+        (provider_secret_name,),
+    )
+    monkeypatch.setenv(docker_secret_name, docker_secret_value)
+    monkeypatch.setenv(provider_secret_name, provider_secret_value)
+
+    def fake_redact(command, secret_env_names):
+        redaction_calls.append((list(command), tuple(secret_env_names)))
+        return original_redact(command, secret_env_names)
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="provider secret env command passed",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module,
+        "i_dockercommand_redact",
+        fake_redact,
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["python", "-c", "print('provider secret')"])
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    env_values = [
+        docker_run_command[index + 1]
+        for index, command_part in enumerate(docker_run_command)
+        if command_part == "-e"
+    ]
+    redacted_command = original_redact(
+        redaction_calls[0][0],
+        redaction_calls[0][1],
+    )
+    redacted_text = " ".join(redacted_command)
+
+    assert result.succeeded is True
+    assert f"{docker_secret_name}={docker_secret_value}" in env_values
+    assert f"{provider_secret_name}={provider_secret_value}" in env_values
+    assert redaction_calls[0][1] == (docker_secret_name, provider_secret_name)
+    assert docker_secret_value not in redacted_text
+    assert provider_secret_value not in redacted_text
+    assert f"{docker_secret_name}=<redacted>" in redacted_command
+    assert f"{provider_secret_name}=<redacted>" in redacted_command
+
+
+def test_docker_sandbox_provider_missing_provider_secret_env_raises_when_building_docker_command(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    provider_secret_name = "RALPH_MISSING_PROVIDER_SECRET_ENV_038"
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_secret_env_allowlist",
+        (provider_secret_name,),
+    )
+    monkeypatch.delenv(provider_secret_name, raising=False)
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=f"Missing required Docker secret env var: {provider_secret_name}",
+    ):
+        provider.i_sandboxhandle_run(["python", "-c", "print('provider secret')"])
+
+    assert commands == [["docker", "image", "inspect", image_name]]
+
+
 def _run_git_command(
     repo_path: Path,
     *arguments: str,

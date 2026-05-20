@@ -9,6 +9,7 @@ from ai_coder.agent_provider.agent_provider import (
     CodexProvider,
     FakeTestAgentProvider,
     MockAgentProvider,
+    i_agent_provider_create,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "CodexProvider",
     "FakeTestAgentProvider",
     "MockAgentProvider",
+    "i_agent_provider_create",
 ]

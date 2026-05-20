@@ -25,6 +25,7 @@ _MAIN_TEST_ENV_NAMES = (
     "RALPH_AGENT",
     "DRY_RUN",
     "RALPH_SANDBOX_MODE",
+    "CODEX_COMMAND",
 )
 
 
@@ -373,20 +374,76 @@ def test_main_valid_cli_overrides_update_setup_config(
     assert main_module.setup_config.dry_run is False
 
 
-def test_main_rejects_codex_agent_until_codex_runtime_exists(
+def test_main_rejects_codex_agent_without_codex_command(
     capsys,
     monkeypatch,
+    tmp_path,
 ) -> None:
-    _clear_main_test_env(monkeypatch)
-    monkeypatch.setenv("TESTING_FLAG", "true")
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+    monkeypatch.delenv("CODEX_COMMAND", raising=False)
     _refresh_main_config()
+    original_config = main_module.setup_config.to_dict()
 
     exit_code = main_module.main(["--agent", "codex"])
 
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "Error: --agent must be 'mock' for Release 1." in captured.out
+    assert "Error: --agent codex requires CODEX_COMMAND." in captured.out
+    assert main_module.setup_config.to_dict() == original_config
+
+
+def test_main_accepts_codex_agent_when_codex_command_is_configured(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("CODEX_COMMAND", "codex")
+    _refresh_main_config()
+
+    def fake_ralph_run(
+        issues=None,
+        max_iterations=3,
+        prompt_path=None,
+        repo_path=None,
+        display=None,
+    ):
+        return SimpleNamespace(
+            selected_issue=SimpleNamespace(
+                number=38,
+                title="Add agent provider seam",
+            ),
+            prompt="fake prompt",
+            orchestrator_result=SimpleNamespace(
+                iterations=1,
+                final_output="Done\n<promise>COMPLETE</promise>",
+            ),
+            completed=True,
+            message="RALPH completed the selected issue.",
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "i_ralph_run",
+        fake_ralph_run,
+    )
+
+    exit_code = main_module.main(
+        [
+            "--agent",
+            "codex",
+            "--repo-path",
+            str(tmp_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Selected issue #38: Add agent provider seam" in captured.out
+    assert main_module.setup_config.default_agent == "codex"
+    assert main_module.setup_config.codex_command == "codex"
 
 
 def test_main_invalid_max_iterations_leaves_setup_config_unchanged(
