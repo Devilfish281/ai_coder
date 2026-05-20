@@ -1,7 +1,10 @@
 # tests/agent_provider/test_agent_provider.py
+import json
+
 from ai_coder.agent_provider import (
     COMPLETE_TOKEN,
     AgentResponse,
+    CodexProvider,
     FakeTestAgentProvider,
     MockAgentProvider,
 )
@@ -15,6 +18,25 @@ class FakeSandboxHandle:
 
     def i_sandboxhandle_run(self, command: list[str]) -> CommandResult:
         self.commands.append(command)
+        return self.command_result
+
+
+class FakeCodexSandboxHandle:
+    def __init__(self, command_result: CommandResult) -> None:
+        self.command_result = command_result
+        self.calls: list[dict[str, object]] = []
+
+    def i_sandboxhandle_run(
+        self,
+        command: list[str],
+        stdin_text: str = "",
+    ) -> CommandResult:
+        self.calls.append(
+            {
+                "command": command,
+                "stdin_text": stdin_text,
+            }
+        )
         return self.command_result
 
 
@@ -111,3 +133,197 @@ def test_fake_test_agent_does_not_put_prompt_text_in_command_arguments() -> None
     assert provider.prompts == [unsafe_prompt]
     assert unsafe_prompt not in command_text
     assert len(sandbox_handle.commands) == 1
+
+
+def test_codex_provider_builds_non_interactive_command(tmp_path) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Plain Codex output\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    prompt = "Fix issue #37 without putting this prompt in command args."
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+
+    assert result.error is None
+    assert result.output == "Plain Codex output\n<promise>COMPLETE</promise>"
+    assert command == [
+        "codex",
+        "exec",
+        "--cd",
+        str(tmp_path),
+        "--sandbox",
+        "workspace-write",
+        "--color",
+        "never",
+        "--json",
+        "--output-last-message",
+        str(final_output_path),
+        "-",
+    ]
+    assert "--full-auto" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "--yolo" not in command
+    assert "--ignore-user-config" not in command
+    assert "--ignore-rules" not in command
+    assert "--ephemeral" not in command
+    assert prompt not in command
+
+
+def test_codex_provider_passes_prompt_through_stdin(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex done\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    prompt = (
+        "Long Windows prompt text " * 100
+        + r' !`echo unsafe` $(Write-Output "title") && echo title | whoami %PATH% ^ C:\Temp\RALPH'
+    )
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+
+    assert result.error is None
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert prompt not in command
+    assert prompt not in command_text
+    assert command[-1] == "-"
+
+
+def test_codex_provider_parses_jsonl_agent_message(tmp_path) -> None:
+    final_text = "Codex completed the issue.\n<promise>COMPLETE</promise>"
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_123",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": final_text,
+                },
+            }
+        )
+        + "\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #37")
+
+    assert result.error is None
+    assert result.output == final_text
+    assert COMPLETE_TOKEN in result.output
+
+
+def test_codex_provider_uses_output_last_message_file_when_jsonl_has_no_final_text(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_output_path.write_text(
+        "Final message from file.\n<promise>COMPLETE</promise>",
+        encoding="utf-8",
+    )
+    stdout = json.dumps({"type": "turn.completed"}) + "\n"
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #37")
+
+    assert result.error is None
+    assert result.output == "Final message from file.\n<promise>COMPLETE</promise>"
+
+
+def test_codex_provider_falls_back_to_plain_stdout(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Plain stdout result.\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #37")
+
+    assert result.error is None
+    assert result.output == "Plain stdout result.\n<promise>COMPLETE</promise>"
+
+
+def test_codex_provider_returns_error_on_nonzero_exit(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="",
+            stderr="codex failed",
+            exit_code=7,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #37")
+
+    assert result.output == ""
+    assert result.error == "codex failed"
+    assert provider.prompts == ["Fix issue #37"]
+    assert provider.run_count == 1

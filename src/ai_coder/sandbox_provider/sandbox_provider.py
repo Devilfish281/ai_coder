@@ -158,11 +158,13 @@ class SandboxHandle(Protocol):
         self,
         command: list[str],
         cwd: Path | None = None,
+        stdin_text: str = "",
     ) -> CommandResult:
         """Run a command through the sandbox.
 
         :param command: Command and arguments to execute.
         :param cwd: Optional working directory.
+        :param stdin_text: Optional text passed to the command through stdin.
         :return: Captured command result.
         """
 
@@ -232,11 +234,13 @@ class LocalSandboxProvider:
         self,
         command: list[str],
         cwd: Path | None = None,
+        stdin_text: str = "",
     ) -> CommandResult:
         """Run a command locally.
 
         :param command: Command and arguments to execute.
         :param cwd: Optional host-side working directory.
+        :param stdin_text: Optional text passed to the command through stdin.
         :return: Captured command result.
         :raises ValueError: If ``command`` is empty.
         """
@@ -250,13 +254,20 @@ class LocalSandboxProvider:
             command,
         )
 
+        run_kwargs = {
+            "cwd": run_cwd,
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+
+        if stdin_text:
+            run_kwargs["input"] = stdin_text
+
         try:
             completed_process = subprocess.run(
                 command,
-                cwd=run_cwd,
-                capture_output=True,
-                text=True,
-                check=False,
+                **run_kwargs,
             )
         except OSError as error:
             result = _command_result_from_os_error(error)
@@ -329,6 +340,7 @@ class DockerSandboxProvider:
         self,
         command: list[str],
         cwd: Path | None = None,
+        stdin_text: str = "",
     ) -> CommandResult:
         """Run one command inside Docker.
 
@@ -337,6 +349,7 @@ class DockerSandboxProvider:
 
         :param command: Command and arguments to run inside Docker.
         :param cwd: Optional host-side or relative working directory.
+        :param stdin_text: Optional text passed to the Docker command through stdin.
         :return: Captured command result.
         :raises ValueError: If ``command`` is empty.
         """
@@ -371,12 +384,19 @@ class DockerSandboxProvider:
             redacted_docker_command,
         )
 
+        run_kwargs = {
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+
+        if stdin_text:
+            run_kwargs["input"] = stdin_text
+
         try:
             completed_process = subprocess.run(
                 docker_command,
-                capture_output=True,
-                text=True,
-                check=False,
+                **run_kwargs,
             )
         except OSError as error:
             result = _command_result_from_os_error(error)

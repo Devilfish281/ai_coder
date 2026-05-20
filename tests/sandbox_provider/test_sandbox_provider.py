@@ -63,6 +63,54 @@ def test_local_sandbox_provider_runs_command_in_working_directory(tmp_path) -> N
     assert result.stdout.strip() == tmp_path.name
 
 
+def test_local_sandbox_provider_passes_stdin_text_to_command(tmp_path) -> None:
+    sandbox = LocalSandboxProvider(tmp_path)
+    stdin_text = "hello from stdin"
+
+    result = sandbox.i_sandboxhandle_run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print(sys.stdin.read())",
+        ],
+        stdin_text=stdin_text,
+    )
+
+    assert result.exit_code == 0
+    assert result.succeeded is True
+    assert result.failed is False
+    assert result.stderr == ""
+    assert result.stdout.strip() == stdin_text
+
+
+def test_local_sandbox_provider_does_not_put_stdin_text_in_command_arguments(
+    tmp_path,
+) -> None:
+    sandbox = LocalSandboxProvider(tmp_path)
+    stdin_text = r'Issue body !`echo unsafe` $(Write-Output "unsafe") && whoami'
+
+    result = sandbox.i_sandboxhandle_run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print(sys.stdin.read())",
+        ],
+        stdin_text=stdin_text,
+    )
+
+    command_text = " ".join(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print(sys.stdin.read())",
+        ]
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == stdin_text
+    assert stdin_text not in command_text
+
+
 def test_local_sandbox_provider_returns_nonzero_exit_code(tmp_path) -> None:
     sandbox = LocalSandboxProvider(tmp_path)
 
@@ -444,6 +492,84 @@ def test_docker_sandbox_provider_runs_command_with_bind_mount_and_workspace(
         "-c",
         "print('hello from docker')",
     ]
+
+
+def test_docker_sandbox_provider_passes_stdin_text_to_docker_run(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    stdin_values: list[str] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    stdin_text = r'Codex prompt !`echo unsafe` $(Write-Output "unsafe") && whoami'
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+        input="",  #  Added Code
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+        stdin_values.append(input)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="stdin command passed",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(
+        ["codex", "exec", "-"],
+        stdin_text=stdin_text,
+    )
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    docker_run_command_text = " ".join(docker_run_command)
+
+    assert result.succeeded is True
+    assert result.stdout == "stdin command passed"
+    assert stdin_values[-1] == stdin_text
+    assert stdin_text not in docker_run_command
+    assert stdin_text not in docker_run_command_text
 
 
 def test_docker_sandbox_provider_returns_failed_command_result(

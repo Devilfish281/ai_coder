@@ -5,6 +5,8 @@ from ai_coder.agent_provider.agent_provider import (
     COMPLETE_TOKEN,
     AgentProvider,
     AgentResponse,
+    CodexCommandContract,
+    CodexProvider,
     FakeTestAgentProvider,
     MockAgentProvider,
 )
@@ -13,6 +15,8 @@ __all__ = [
     "COMPLETE_TOKEN",
     "AgentResponse",
     "AgentProvider",
+    "CodexCommandContract",
+    "CodexProvider",
     "FakeTestAgentProvider",
     "MockAgentProvider",
 ]
