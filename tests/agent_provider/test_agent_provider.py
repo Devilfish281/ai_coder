@@ -12,6 +12,10 @@ from ai_coder.agent_provider import (
     MockAgentProvider,
     i_agent_provider_create,
 )
+
+
+from ai_coder.orchestrator import i_orchestrator_run
+
 from ai_coder.sandbox_provider import CommandResult
 
 
@@ -510,6 +514,65 @@ def test_codex_provider_returns_no_events_for_plain_stdout(tmp_path) -> None:
     assert result.error is None
     assert result.output == "Plain stdout result.\n<promise>COMPLETE</promise>"
     assert result.events == ()
+
+
+def test_codex_provider_prefers_plain_stdout_when_structured_output_is_unavailable(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_output_path.write_text(
+        "Final message file should not hide plain stdout.",
+        encoding="utf-8",
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Plain stdout wins.\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #42")
+
+    assert result.error is None
+    assert result.output == "Plain stdout wins.\n<promise>COMPLETE</promise>"
+    assert result.output != "Final message file should not hide plain stdout."
+    assert result.events == ()
+
+
+def test_codex_provider_plain_stdout_completion_reaches_orchestrator(
+    tmp_path,
+) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Plain stdout result.\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = i_orchestrator_run(
+        provider,
+        "Fix issue #42",
+        max_iterations=1,
+    )
+
+    assert result.completed is True
+    assert result.final_output == "Plain stdout result.\n<promise>COMPLETE</promise>"
+    assert COMPLETE_TOKEN in result.final_output
+    assert result.error is None
 
 
 def test_codex_provider_keeps_events_when_final_output_file_is_used(
