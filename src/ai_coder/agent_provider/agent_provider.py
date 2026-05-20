@@ -259,11 +259,18 @@ def _codex_output_from_result(
     if parse_result.output_text:
         return parse_result.output_text
 
+    if not parse_result.structured_output_found:
+        return _codex_plain_stdout_output(stdout_text)
+
     final_output_file_text = _read_text_if_file_exists(final_output_path)
 
     if final_output_file_text:
         return final_output_file_text
 
+    return stdout_text
+
+
+def _codex_plain_stdout_output(stdout_text: str) -> str:
     return stdout_text
 
 
@@ -469,7 +476,7 @@ def _codex_error_message(
     structured_parse_result: _CodexStructuredParseResult | None = None,
 ) -> str:
     stderr_text = str(getattr(command_result, "stderr", "")).strip()
-    stdout_text = str(getattr(command_result, "stdout", "")).strip()
+    stdout_text = str(getattr(command_result, "stdout", ""))
     exit_code = getattr(command_result, "exit_code", "unknown")
 
     if stderr_text:
@@ -490,8 +497,10 @@ def _codex_error_message(
     if final_output_file_text:
         return final_output_file_text
 
-    if stdout_text:
-        return stdout_text
+    plain_stdout_text = _codex_plain_stdout_output(stdout_text).strip()
+
+    if plain_stdout_text:
+        return plain_stdout_text
 
     return f"Codex exited with code {exit_code}."
 
