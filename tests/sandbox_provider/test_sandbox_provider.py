@@ -707,6 +707,124 @@ def test_docker_sandbox_provider_keeps_secret_env_allowlist_behavior_with_docker
     assert f"{secret_name}=<redacted>" in redacted_command
 
 
+def test_docker_sandbox_provider_logs_redacted_secret_env_command(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    commands: list[list[str]] = []
+    image_name = "ai-code-test:latest"
+    build_command = "docker build -f .ai_coder/Dockerfile -t ai-code-test:latest ."
+    secret_name = "RALPH_SECRET_ENV_035"
+    secret_value = "super-secret-value-035"
+
+    class FakeLogger:
+        def __init__(self) -> None:
+            self.debug_calls: list[tuple[str, tuple[object, ...]]] = []
+            self.info_calls: list[tuple[str, tuple[object, ...]]] = []
+            self.error_calls: list[tuple[str, tuple[object, ...]]] = []
+
+        def debug(self, message, *args, **kwargs) -> None:
+            self.debug_calls.append((str(message), tuple(args)))
+
+        def info(self, message, *args, **kwargs) -> None:
+            self.info_calls.append((str(message), tuple(args)))
+
+        def error(self, message, *args, **kwargs) -> None:
+            self.error_calls.append((str(message), tuple(args)))
+
+    fake_logger = FakeLogger()
+
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (secret_name,),
+    )
+    monkeypatch.setenv(secret_name, secret_value)
+    monkeypatch.setattr(
+        sandbox_provider_module,
+        "logger",
+        fake_logger,
+    )
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        check=False,
+    ):
+        command_parts = list(command)
+        commands.append(command_parts)
+
+        assert capture_output is True
+        assert text is True
+        assert check is False
+
+        if command_parts[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="[]",
+                stderr="",
+            )
+
+        if command_parts[:3] == ["docker", "run", "--rm"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="secret env command passed",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=99,
+            stdout="",
+            stderr=f"Unexpected command: {command_parts}",
+        )
+
+    monkeypatch.setattr(
+        sandbox_provider_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = DockerSandboxProvider(
+        worktree_path=tmp_path,
+        image_name=image_name,
+        docker_build_command=build_command,
+    )
+
+    result = provider.i_sandboxhandle_run(["python", "-c", "print('secret')"])
+
+    docker_run_commands = [
+        command for command in commands if command[:3] == ["docker", "run", "--rm"]
+    ]
+    docker_run_command = docker_run_commands[0]
+    env_values = [
+        docker_run_command[index + 1]
+        for index, command_part in enumerate(docker_run_command)
+        if command_part == "-e"
+    ]
+    docker_log_calls = [
+        call
+        for call in fake_logger.debug_calls
+        if call[0] == "Running Docker sandbox command. docker_command=%s"
+    ]
+    logged_docker_command = docker_log_calls[0][1][0]
+    logged_docker_command_text = " ".join(str(part) for part in logged_docker_command)
+
+    assert result.succeeded is True
+    assert f"{secret_name}={secret_value}" in env_values
+    assert docker_log_calls
+    assert secret_value not in logged_docker_command_text
+    assert f"{secret_name}=<redacted>" in logged_docker_command
+
+
 def test_docker_sandbox_provider_missing_secret_env_raises_when_building_docker_command(  #  Changed Code
     monkeypatch,
     tmp_path,
