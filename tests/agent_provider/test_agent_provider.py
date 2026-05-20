@@ -562,3 +562,174 @@ def test_agent_provider_create_rejects_empty_codex_command(tmp_path) -> None:
             worktree_path=tmp_path,
             codex_command="   ",
         )
+
+
+def _issue_040_large_codex_prompt() -> str:
+    issue_body_lines = [
+        "# Issue 040 — Add CodexProvider prompt passing for long prompts",
+        "",
+        "## Labels",
+        "tracer bullet, codex, windows",
+        "",
+        "## Full GitHub issue body",
+        "This prompt simulates a large GitHub issue body.",
+        r"Windows path: C:\Users\ME\Documents\Python\2026\Projects\ai_coder",
+        r"Shell-looking text: !`echo unsafe` $(Write-Output " "unsafe" ") && whoami",
+        r"More shell-looking text: echo %PATH% ^ | & < > "
+        "quoted text"
+        " 'single quoted text'",
+        "Unicode text: RALPH 🚀 café naïve résumé 中文",
+        "",
+    ]
+
+    repeated_body = "\n".join(
+        f"Large issue body line {line_number}: keep this text out of command args."
+        for line_number in range(1, 301)
+    )
+
+    return "\n".join(issue_body_lines) + "\n" + repeated_body
+
+
+def test_codex_provider_passes_large_prompt_through_stdin_only(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex done\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    prompt = _issue_040_large_codex_prompt()
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+
+    assert result.error is None
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert provider.prompts == [prompt]
+    assert provider.run_count == 1
+    assert prompt not in command
+    assert prompt not in command_text
+    assert "Large issue body line 250" not in command_text
+    assert r"C:\Users\ME\Documents\Python\2026\Projects\ai_coder" not in command_text
+    assert command[-1] == "-"
+
+
+def test_codex_provider_keeps_full_issue_body_out_of_command_args(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex completed\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    final_output_path = tmp_path / "codex-last-message.md"
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    issue_body_marker = "UNIQUE_ISSUE_040_BODY_MARKER_DO_NOT_LOG_OR_ARG"
+    prompt = (
+        "# GitHub Issue\n\n"
+        "Title: Add CodexProvider prompt passing for long prompts\n"
+        "Labels: tracer bullet, codex\n\n"
+        f"{issue_body_marker}\n" + _issue_040_large_codex_prompt()
+    )
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+
+    assert result.error is None
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert command == [
+        "codex",
+        "exec",
+        "--cd",
+        str(tmp_path),
+        "--sandbox",
+        "workspace-write",
+        "--color",
+        "never",
+        "--json",
+        "--output-last-message",
+        str(final_output_path),
+        "-",
+    ]
+    assert prompt not in command
+    assert prompt not in command_text
+    assert issue_body_marker not in command_text
+
+
+def test_codex_provider_does_not_log_raw_full_prompt_by_default(
+    tmp_path,
+    caplog,
+) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex completed\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    prompt_marker = "UNIQUE_RAW_PROMPT_MARKER_ISSUE_040_SHOULD_NOT_BE_LOGGED"
+    prompt = prompt_marker + "\n" + _issue_040_large_codex_prompt()
+
+    with caplog.at_level("INFO"):
+        result = provider.i_agent_provider_run(prompt)
+
+    assert result.error is None
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert prompt not in caplog.text
+    assert prompt_marker not in caplog.text
+
+
+def test_agent_provider_create_codex_passes_large_prompt_through_stdin(
+    tmp_path,
+) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex completed\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = i_agent_provider_create(
+        provider_name="codex",
+        sandbox_handle=sandbox_handle,
+        worktree_path=tmp_path,
+        codex_command="codex",
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    prompt = _issue_040_large_codex_prompt()
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+
+    assert result.error is None
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert prompt not in command
+    assert prompt not in command_text
+    assert command[-1] == "-"
