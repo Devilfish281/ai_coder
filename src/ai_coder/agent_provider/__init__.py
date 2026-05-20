@@ -4,6 +4,7 @@ from __future__ import annotations
 from ai_coder.agent_provider.agent_provider import (
     COMPLETE_TOKEN,
     AgentProvider,
+    AgentProviderEvent,
     AgentResponse,
     CodexCommandContract,
     CodexProvider,
@@ -14,6 +15,7 @@ from ai_coder.agent_provider.agent_provider import (
 
 __all__ = [
     "COMPLETE_TOKEN",
+    "AgentProviderEvent",
     "AgentResponse",
     "AgentProvider",
     "CodexCommandContract",

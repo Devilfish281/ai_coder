@@ -5,6 +5,7 @@ import pytest
 
 from ai_coder.agent_provider import (
     COMPLETE_TOKEN,
+    AgentProviderEvent,
     AgentResponse,
     CodexProvider,
     FakeTestAgentProvider,
@@ -68,6 +69,32 @@ def test_mock_agent_uses_scripted_responses_in_order() -> None:
     assert first_result.output == "Still working"
     assert second_result.output == "Done\n<promise>COMPLETE</promise>"
     assert provider.run_count == 2
+
+
+def test_agent_response_defaults_to_empty_events() -> None:
+    response = AgentResponse(output="Done")
+
+    assert response.output == "Done"
+    assert response.error is None
+    assert response.events == ()
+
+
+def test_agent_provider_event_stores_normalized_provider_data() -> None:
+    event = AgentProviderEvent(
+        event_type="item.completed",
+        item_type="agent_message",
+        text="Finished",
+        status="completed",
+        session_id="thread_041",
+        raw={"type": "item.completed"},
+    )
+
+    assert event.event_type == "item.completed"
+    assert event.item_type == "agent_message"
+    assert event.text == "Finished"
+    assert event.status == "completed"
+    assert event.session_id == "thread_041"
+    assert event.raw == {"type": "item.completed"}
 
 
 def test_fake_test_agent_runs_success_command_through_sandbox_seam() -> None:
@@ -259,6 +286,298 @@ def test_codex_provider_parses_jsonl_agent_message(tmp_path) -> None:
     assert result.error is None
     assert result.output == final_text
     assert COMPLETE_TOKEN in result.output
+
+
+def test_codex_provider_prefers_structured_jsonl_over_final_output_file(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_output_path.write_text(
+        "Final message from file should not be used.",
+        encoding="utf-8",
+    )
+    final_text = "Structured JSONL message wins.\n<promise>COMPLETE</promise>"
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_041",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": final_text,
+                },
+            }
+        )
+        + "\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #41")
+
+    assert result.error is None
+    assert result.output == final_text
+    assert result.output != "Final message from file should not be used."
+    assert len(result.events) == 2
+    assert result.events[0].event_type == "thread.started"
+    assert result.events[1].event_type == "item.completed"
+    assert result.events[1].item_type == "agent_message"
+    assert result.events[1].text == final_text
+
+
+def test_codex_provider_returns_normalized_events_from_jsonl(tmp_path) -> None:
+    final_text = "Codex finished from normalized events.\n<promise>COMPLETE</promise>"
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_041",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "turn.started",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "status": "completed",
+                    "output": "pytest passed",
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "status": "completed",
+                    "text": final_text,
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "turn.completed",
+            }
+        )
+        + "\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #41")
+
+    assert result.error is None
+    assert result.output == final_text
+    assert len(result.events) == 5
+
+    thread_event = result.events[0]
+    command_event = result.events[2]
+    agent_message_event = result.events[3]
+
+    assert thread_event.event_type == "thread.started"
+    assert thread_event.session_id == "thread_041"
+
+    assert command_event.event_type == "item.completed"
+    assert command_event.item_type == "command_execution"
+    assert command_event.status == "completed"
+    assert command_event.text == "pytest passed"
+
+    assert agent_message_event.event_type == "item.completed"
+    assert agent_message_event.item_type == "agent_message"
+    assert agent_message_event.status == "completed"
+    assert agent_message_event.text == final_text
+    assert COMPLETE_TOKEN in agent_message_event.text
+
+
+def test_codex_provider_returns_clear_error_for_malformed_jsonl(tmp_path) -> None:
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_041",
+            }
+        )
+        + "\n"
+        + "{malformed json line"
+        + "\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #41")
+
+    assert result.output == stdout
+    assert result.error is not None
+    assert "Malformed Codex structured output" in result.error
+    assert "line 2" in result.error
+    assert len(result.events) == 1
+    assert result.events[0].event_type == "thread.started"
+    assert result.events[0].session_id == "thread_041"
+
+
+def test_codex_provider_returns_clear_error_when_first_jsonl_line_is_malformed(
+    tmp_path,
+) -> None:
+    stdout = "{malformed json line\n"
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #41")
+
+    assert result.output == stdout
+    assert result.error is not None
+    assert "Malformed Codex structured output" in result.error
+    assert "line 1" in result.error
+    assert result.events == ()
+
+
+def test_codex_provider_returns_no_events_for_plain_stdout(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Plain stdout result.\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #41")
+
+    assert result.error is None
+    assert result.output == "Plain stdout result.\n<promise>COMPLETE</promise>"
+    assert result.events == ()
+
+
+def test_codex_provider_keeps_events_when_final_output_file_is_used(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_output_path.write_text(
+        "Final message from file.\n<promise>COMPLETE</promise>",
+        encoding="utf-8",
+    )
+    stdout = json.dumps({"type": "turn.completed"}) + "\n"
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #41")
+
+    assert result.error is None
+    assert result.output == "Final message from file.\n<promise>COMPLETE</promise>"
+    assert len(result.events) == 1
+    assert result.events[0].event_type == "turn.completed"
+
+
+def test_codex_provider_returns_normalized_error_event_from_jsonl(tmp_path) -> None:
+    stdout = (
+        json.dumps(
+            {
+                "type": "error",
+                "thread_id": "thread_041",
+                "error": {
+                    "message": "Codex JSONL failure.",
+                },
+            }
+        )
+        + "\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=2,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #41")
+
+    assert result.output == stdout
+    assert result.error == "Codex JSONL failure."
+    assert len(result.events) == 1
+    assert result.events[0].event_type == "error"
+    assert result.events[0].text == "Codex JSONL failure."
+    assert result.events[0].session_id == "thread_041"
 
 
 def test_codex_provider_uses_output_last_message_file_when_jsonl_has_no_final_text(
