@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+
 from ai_coder.setup_config import (
     DEFAULT_AGENT_NAME,
     DEFAULT_COMMIT_MESSAGE_TEMPLATE,
@@ -10,6 +11,8 @@ from ai_coder.setup_config import (
     DEFAULT_GITHUB_REPO,
     DEFAULT_PROJECT_NAME,
     DEFAULT_TEST_COMMAND,
+    DEFAULT_PROVIDER_ENV_ALLOWLIST,
+    DEFAULT_PROVIDER_SECRET_ENV_ALLOWLIST,
     c_setup_config,
 )
 
@@ -35,6 +38,8 @@ _RUNTIME_ENV_NAMES = (
     "RALPH_DOCKER_IMAGE_NAME",
     "RALPH_DOCKERFILE_PATH",
     "CODEX_COMMAND",
+    "RALPH_PROVIDER_ENV_ALLOWLIST",
+    "RALPH_PROVIDER_SECRET_ENV_ALLOWLIST",
 )
 
 
@@ -56,6 +61,85 @@ def _prepare_valid_paths(monkeypatch, tmp_path: Path) -> Path:
 def _fresh_config():
     c_setup_config._instance = None
     return c_setup_config.get_instance()
+
+
+def test_setup_config_default_provider_env_allowlists_are_empty(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    config = _fresh_config()
+
+    assert DEFAULT_PROVIDER_ENV_ALLOWLIST == ()
+    assert DEFAULT_PROVIDER_SECRET_ENV_ALLOWLIST == ()
+    assert config.provider_env_allowlist == ()
+    assert config.provider_secret_env_allowlist == ()
+    assert "OPENAI_API_KEY" not in config.provider_secret_env_allowlist
+    assert "ANTHROPIC_API_KEY" not in config.provider_secret_env_allowlist
+    assert "GH_TOKEN" not in config.provider_secret_env_allowlist
+
+
+def test_setup_config_loads_provider_env_allowlists_from_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "RALPH_PROVIDER_ENV_ALLOWLIST",
+        "CODEX_HOME, RALPH_PROVIDER_NORMAL_038",
+    )
+    monkeypatch.setenv(
+        "RALPH_PROVIDER_SECRET_ENV_ALLOWLIST",
+        "OPENAI_API_KEY, RALPH_PROVIDER_SECRET_038",
+    )
+
+    config = _fresh_config()
+
+    assert config.provider_env_allowlist == (
+        "CODEX_HOME",
+        "RALPH_PROVIDER_NORMAL_038",
+    )
+    assert config.provider_secret_env_allowlist == (
+        "OPENAI_API_KEY",
+        "RALPH_PROVIDER_SECRET_038",
+    )
+
+
+def test_setup_config_to_dict_includes_provider_env_allowlists(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_PROVIDER_ENV_ALLOWLIST", "CODEX_HOME")
+    monkeypatch.setenv("RALPH_PROVIDER_SECRET_ENV_ALLOWLIST", "OPENAI_API_KEY")
+
+    config = _fresh_config()
+
+    result = config.to_dict()
+
+    assert result["provider_env_allowlist"] == ["CODEX_HOME"]
+    assert result["provider_secret_env_allowlist"] == ["OPENAI_API_KEY"]
+
+
+def test_setup_config_secret_values_includes_provider_secret_allowlist(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_PROVIDER_SECRET_038", "provider-secret-value-038")
+
+    config = _fresh_config()
+    config.docker_secret_env_allowlist = ()
+    config.provider_secret_env_allowlist = ("RALPH_PROVIDER_SECRET_038",)
+
+    result = config.i_setup_config_secret_values()
+
+    assert result == ("provider-secret-value-038",)
 
 
 def test_setup_config_default_docker_env_allowlist_is_small(

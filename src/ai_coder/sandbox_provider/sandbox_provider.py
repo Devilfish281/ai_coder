@@ -376,7 +376,7 @@ class DockerSandboxProvider:
 
         redacted_docker_command = i_dockercommand_redact(
             docker_command,
-            setup_config.docker_secret_env_allowlist,
+            _configured_secret_env_names(),  #  Changed Code
         )
 
         logger.debug(
@@ -501,54 +501,48 @@ class DockerSandboxProvider:
 
         return i_mountutils_build_docker_volume_args(all_mounts)
 
-    def _build_env_args(self) -> list[str]:  #
+    def _build_env_args(self) -> list[str]:
         """Build safe Docker environment variable arguments.
 
-        Only variables listed in ``setup_config.docker_env_allowlist`` are
+        Only variables listed in Docker or provider normal env allowlists are
         passed into Docker.
 
-        Secrets are intentionally not included by default.
+        Secrets are intentionally handled by ``_build_secret_env_args()``.
 
         :return: Docker ``-e`` arguments.
         """
 
-        env_args: list[str] = []  #
-        allowed_env_names = getattr(  #
-            setup_config,  #
-            "docker_env_allowlist",  #
-            ("PYTHONUNBUFFERED",),  #
-        )  #
+        env_args: list[str] = []
+        allowed_env_names = _configured_normal_env_names()
 
-        for env_name in allowed_env_names:  #
-            cleaned_name = str(env_name).strip()  #
-            if not cleaned_name:  #
-                continue  #
+        for env_name in allowed_env_names:
+            cleaned_name = str(env_name).strip()
+            if not cleaned_name:
+                continue
 
-            env_value = os.getenv(cleaned_name)  #
+            env_value = os.getenv(cleaned_name)
 
-            if env_value is None and cleaned_name == "PYTHONUNBUFFERED":  #
-                env_value = "1"  #
+            if env_value is None and cleaned_name == "PYTHONUNBUFFERED":
+                env_value = "1"
 
-            if env_value is None:  #
-                logger.debug(  #
-                    "Skipping Docker env var because it is not set. env_name=%s",  #
-                    cleaned_name,  #
-                )  #
-                continue  #
+            if env_value is None:
+                logger.debug(
+                    "Skipping Docker env var because it is not set. env_name=%s",
+                    cleaned_name,
+                )
+                continue
 
-            env_args.extend(["-e", f"{cleaned_name}={env_value}"])  #
+            env_args.extend(["-e", f"{cleaned_name}={env_value}"])
 
-        logger.debug(  #
-            "Built Docker env args. env_names=%s",  #
+        logger.debug(
+            "Built Docker env args. env_names=%s",
             [
                 env_args[index + 1].split("=", 1)[0]
                 for index in range(0, len(env_args), 2)
-            ],  #
-        )  #
+            ],
+        )
 
-        # TODO: Later support setup_config.py allowlist entries for AI agent secrets.
-        # TODO: Later consider Docker secrets for sensitive values instead of env vars.
-        return env_args  #
+        return env_args
 
     def _build_secret_env_args(self) -> list[str]:
         """Build Docker environment arguments for configured secret values.
@@ -562,11 +556,7 @@ class DockerSandboxProvider:
         """
 
         secret_env_args: list[str] = []
-        allowed_secret_env_names = getattr(
-            setup_config,
-            "docker_secret_env_allowlist",
-            (),
-        )
+        allowed_secret_env_names = _configured_secret_env_names()  #  Changed Code
 
         for env_name in allowed_secret_env_names:
             cleaned_name = str(env_name).strip()
@@ -936,3 +926,52 @@ def _command_result_from_os_error(error: OSError) -> CommandResult:
         stderr=str(error),
         exit_code=1,
     )
+
+
+def _configured_normal_env_names() -> tuple[str, ...]:
+    return _merge_env_name_allowlists(
+        getattr(
+            setup_config,
+            "docker_env_allowlist",
+            ("PYTHONUNBUFFERED",),
+        ),
+        getattr(
+            setup_config,
+            "provider_env_allowlist",
+            (),
+        ),
+    )
+
+
+def _configured_secret_env_names() -> tuple[str, ...]:
+    return _merge_env_name_allowlists(
+        getattr(
+            setup_config,
+            "docker_secret_env_allowlist",
+            (),
+        ),
+        getattr(
+            setup_config,
+            "provider_secret_env_allowlist",
+            (),
+        ),
+    )
+
+
+def _merge_env_name_allowlists(*allowlists: object) -> tuple[str, ...]:
+    merged_names: list[str] = []
+    seen_names: set[str] = set()
+
+    for allowlist in allowlists:
+        raw_names = (allowlist,) if isinstance(allowlist, str) else allowlist or ()
+
+        for env_name in raw_names:
+            cleaned_name = str(env_name).strip()
+
+            if not cleaned_name or cleaned_name in seen_names:
+                continue
+
+            seen_names.add(cleaned_name)
+            merged_names.append(cleaned_name)
+
+    return tuple(merged_names)

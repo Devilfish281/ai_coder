@@ -24,7 +24,7 @@ load_dotenv_once()
 setup_config = c_setup_config.get_instance()
 logger = setup_config.get_logger()
 
-RELEASE_1_AGENT_CHOICES = ("mock",)
+RELEASE_1_AGENT_CHOICES = ("mock", "codex")  # In Release 1, only 'mock' is supported.
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ def main(
     parser.add_argument(
         "--agent",
         default=setup_config.default_agent,
-        help="Agent provider to use. Release 1 supports only 'mock'.",
+        help="Agent provider to use. Use 'mock' or 'codex'. Codex requires CODEX_COMMAND.",
     )
 
     parser.add_argument(
@@ -307,7 +307,10 @@ def _validate_cli_overrides_before_apply(
         return f"Error: --prompt-path does not exist: {cli_overrides.prompt_path}"
 
     if cli_overrides.agent not in RELEASE_1_AGENT_CHOICES:
-        return "Error: --agent must be 'mock' for Release 1."
+        return "Error: --agent must be 'mock' or 'codex'."
+
+    if cli_overrides.agent == "codex" and not setup_config.codex_command.strip():
+        return "Error: --agent codex requires CODEX_COMMAND."
 
     if cli_overrides.sandbox_mode not in {"local", "docker"}:
         return "Error: --sandbox must be 'local' or 'docker'."
