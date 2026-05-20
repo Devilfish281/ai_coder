@@ -11,6 +11,11 @@ from ai_coder.agent_provider import (
     FakeTestAgentProvider,
     MockAgentProvider,
     i_agent_provider_create,
+    NORMALIZED_EVENT_TYPE_ERROR,
+    NORMALIZED_EVENT_TYPE_RESULT,
+    NORMALIZED_EVENT_TYPE_SESSION,
+    NORMALIZED_EVENT_TYPE_TEXT,
+    NORMALIZED_EVENT_TYPE_TOOL_CALL,
 )
 
 
@@ -87,17 +92,19 @@ def test_agent_provider_event_stores_normalized_provider_data() -> None:
     event = AgentProviderEvent(
         event_type="item.completed",
         item_type="agent_message",
-        text="Finished",
+        text="Done",
         status="completed",
-        session_id="thread_041",
+        session_id="thread_123",
+        normalized_type=NORMALIZED_EVENT_TYPE_TEXT,
         raw={"type": "item.completed"},
     )
 
     assert event.event_type == "item.completed"
     assert event.item_type == "agent_message"
-    assert event.text == "Finished"
+    assert event.text == "Done"
     assert event.status == "completed"
-    assert event.session_id == "thread_041"
+    assert event.session_id == "thread_123"
+    assert event.normalized_type == NORMALIZED_EVENT_TYPE_TEXT
     assert event.raw == {"type": "item.completed"}
 
 
@@ -344,6 +351,8 @@ def test_codex_provider_prefers_structured_jsonl_over_final_output_file(
     assert result.events[1].event_type == "item.completed"
     assert result.events[1].item_type == "agent_message"
     assert result.events[1].text == final_text
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_SESSION
+    assert result.events[1].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
 
 
 def test_codex_provider_returns_normalized_events_from_jsonl(tmp_path) -> None:
@@ -364,6 +373,17 @@ def test_codex_provider_returns_normalized_events_from_jsonl(tmp_path) -> None:
         + "\n"
         + json.dumps(
             {
+                "type": "item.started",
+                "item": {
+                    "type": "command_execution",
+                    "status": "in_progress",
+                    "command": "poetry run pytest",
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
                 "type": "item.completed",
                 "item": {
                     "type": "command_execution",
@@ -378,7 +398,6 @@ def test_codex_provider_returns_normalized_events_from_jsonl(tmp_path) -> None:
                 "type": "item.completed",
                 "item": {
                     "type": "agent_message",
-                    "status": "completed",
                     "text": final_text,
                 },
             }
@@ -387,6 +406,7 @@ def test_codex_provider_returns_normalized_events_from_jsonl(tmp_path) -> None:
         + json.dumps(
             {
                 "type": "turn.completed",
+                "status": "completed",
             }
         )
         + "\n"
@@ -405,29 +425,34 @@ def test_codex_provider_returns_normalized_events_from_jsonl(tmp_path) -> None:
         final_output_path=tmp_path / "codex-last-message.md",
     )
 
-    result = provider.i_agent_provider_run("Fix issue #41")
+    result = provider.i_agent_provider_run("Fix issue #43")
 
     assert result.error is None
     assert result.output == final_text
-    assert len(result.events) == 5
+    assert COMPLETE_TOKEN in result.output
+    assert len(result.events) == 6
 
-    thread_event = result.events[0]
-    command_event = result.events[2]
-    agent_message_event = result.events[3]
+    assert result.events[0].event_type == "thread.started"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_SESSION
+    assert result.events[0].session_id == "thread_041"
 
-    assert thread_event.event_type == "thread.started"
-    assert thread_event.session_id == "thread_041"
+    assert result.events[2].event_type == "item.started"
+    assert result.events[2].item_type == "command_execution"
+    assert result.events[2].status == "in_progress"
+    assert result.events[2].normalized_type == NORMALIZED_EVENT_TYPE_TOOL_CALL
 
-    assert command_event.event_type == "item.completed"
-    assert command_event.item_type == "command_execution"
-    assert command_event.status == "completed"
-    assert command_event.text == "pytest passed"
+    assert result.events[3].event_type == "item.completed"
+    assert result.events[3].item_type == "command_execution"
+    assert result.events[3].text == "pytest passed"
+    assert result.events[3].normalized_type == NORMALIZED_EVENT_TYPE_RESULT
 
-    assert agent_message_event.event_type == "item.completed"
-    assert agent_message_event.item_type == "agent_message"
-    assert agent_message_event.status == "completed"
-    assert agent_message_event.text == final_text
-    assert COMPLETE_TOKEN in agent_message_event.text
+    assert result.events[4].event_type == "item.completed"
+    assert result.events[4].item_type == "agent_message"
+    assert result.events[4].text == final_text
+    assert result.events[4].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+
+    assert result.events[5].event_type == "turn.completed"
+    assert result.events[5].normalized_type == NORMALIZED_EVENT_TYPE_RESULT
 
 
 def test_codex_provider_returns_clear_error_for_malformed_jsonl(tmp_path) -> None:
@@ -439,8 +464,7 @@ def test_codex_provider_returns_clear_error_for_malformed_jsonl(tmp_path) -> Non
             }
         )
         + "\n"
-        + "{malformed json line"
-        + "\n"
+        + "{malformed json line\n"
     )
     sandbox_handle = FakeCodexSandboxHandle(
         CommandResult(
@@ -456,15 +480,19 @@ def test_codex_provider_returns_clear_error_for_malformed_jsonl(tmp_path) -> Non
         final_output_path=tmp_path / "codex-last-message.md",
     )
 
-    result = provider.i_agent_provider_run("Fix issue #41")
+    result = provider.i_agent_provider_run("Fix issue #43")
 
     assert result.output == stdout
     assert result.error is not None
     assert "Malformed Codex structured output" in result.error
     assert "line 2" in result.error
-    assert len(result.events) == 1
+    assert len(result.events) == 2
     assert result.events[0].event_type == "thread.started"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_SESSION
     assert result.events[0].session_id == "thread_041"
+    assert result.events[1].event_type == "parse.error"
+    assert result.events[1].normalized_type == NORMALIZED_EVENT_TYPE_ERROR
+    assert "Malformed Codex structured output" in result.events[1].text
 
 
 def test_codex_provider_returns_clear_error_when_first_jsonl_line_is_malformed(
@@ -491,10 +519,13 @@ def test_codex_provider_returns_clear_error_when_first_jsonl_line_is_malformed(
     assert result.error is not None
     assert "Malformed Codex structured output" in result.error
     assert "line 1" in result.error
-    assert result.events == ()
+    assert len(result.events) == 1
+    assert result.events[0].event_type == "parse.error"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_ERROR
+    assert "Malformed Codex structured output" in result.events[0].text
 
 
-def test_codex_provider_returns_no_events_for_plain_stdout(tmp_path) -> None:
+def test_codex_provider_returns_text_event_for_plain_stdout(tmp_path) -> None:
     sandbox_handle = FakeCodexSandboxHandle(
         CommandResult(
             stdout="Plain stdout result.\n<promise>COMPLETE</promise>",
@@ -513,7 +544,11 @@ def test_codex_provider_returns_no_events_for_plain_stdout(tmp_path) -> None:
 
     assert result.error is None
     assert result.output == "Plain stdout result.\n<promise>COMPLETE</promise>"
-    assert result.events == ()
+    assert len(result.events) == 1
+    assert result.events[0].event_type == "plain.stdout"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+    assert result.events[0].text == "Plain stdout result.\n<promise>COMPLETE</promise>"
+    assert COMPLETE_TOKEN in result.events[0].text
 
 
 def test_codex_provider_prefers_plain_stdout_when_structured_output_is_unavailable(
@@ -543,7 +578,10 @@ def test_codex_provider_prefers_plain_stdout_when_structured_output_is_unavailab
     assert result.error is None
     assert result.output == "Plain stdout wins.\n<promise>COMPLETE</promise>"
     assert result.output != "Final message file should not hide plain stdout."
-    assert result.events == ()
+    assert len(result.events) == 1
+    assert result.events[0].event_type == "plain.stdout"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+    assert result.events[0].text == "Plain stdout wins.\n<promise>COMPLETE</promise>"
 
 
 def test_codex_provider_plain_stdout_completion_reaches_orchestrator(
@@ -639,6 +677,7 @@ def test_codex_provider_returns_normalized_error_event_from_jsonl(tmp_path) -> N
     assert result.error == "Codex JSONL failure."
     assert len(result.events) == 1
     assert result.events[0].event_type == "error"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_ERROR
     assert result.events[0].text == "Codex JSONL failure."
     assert result.events[0].session_id == "thread_041"
 
@@ -714,6 +753,43 @@ def test_codex_provider_returns_error_on_nonzero_exit(tmp_path) -> None:
     assert result.error == "codex failed"
     assert provider.prompts == ["Fix issue #37"]
     assert provider.run_count == 1
+
+
+def test_codex_provider_represents_mcp_tool_call_like_event(tmp_path) -> None:
+    stdout = (
+        json.dumps(
+            {
+                "type": "item.started",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "status": "in_progress",
+                    "name": "list_files",
+                },
+            }
+        )
+        + "\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #43")
+
+    assert result.error is None
+    assert len(result.events) == 1
+    assert result.events[0].event_type == "item.started"
+    assert result.events[0].item_type == "mcp_tool_call"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_TOOL_CALL
 
 
 def test_agent_provider_create_builds_fake_provider_for_mock(tmp_path) -> None:

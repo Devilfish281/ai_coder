@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ai_coder.agent_provider import AgentProvider, COMPLETE_TOKEN
+from ai_coder.agent_provider import AgentProvider, AgentProviderEvent, COMPLETE_TOKEN
+
+
 from ai_coder.completion_detector import i_completion_detector_detect
 
 from ai_coder.setup_config import c_setup_config
@@ -38,6 +40,8 @@ class OrchestratorResult:
     :ivar error: Error message when the agent fails or the run reaches the
         maximum iteration limit before completion.
     :vartype error: str | None
+    :ivar events: Normalized provider events collected during the run.
+    :vartype events: tuple[AgentProviderEvent, ...]
     """
 
     completed: bool
@@ -45,6 +49,7 @@ class OrchestratorResult:
     outputs: tuple[str, ...]
     final_output: str
     error: str | None = None
+    events: tuple[AgentProviderEvent, ...] = ()
 
 
 def i_orchestrator_run(
@@ -68,7 +73,7 @@ def i_orchestrator_run(
     :type max_iterations: int
     :param completion_token: Token that marks the task as complete.
     :type completion_token: str
-    :return: Result describing completion state, collected outputs, and errors.
+    :return: Result describing completion state, collected outputs, events, and errors.
     :rtype: OrchestratorResult
     :raises ValueError: If ``max_iterations`` is less than ``1``.
     """
@@ -78,10 +83,12 @@ def i_orchestrator_run(
         raise ValueError("max_iterations must be at least 1")
 
     outputs: list[str] = []
+    events: list[AgentProviderEvent] = []
 
     for iteration_number in range(1, max_iterations + 1):
         logger.info(f"Orchestrator iteration {iteration_number} \n")
         response = agent_provider.i_agent_provider_run(prompt)
+        events.extend(response.events)
 
         if response.error is not None:
             logger.info("Error detected in agent response.")
@@ -91,6 +98,7 @@ def i_orchestrator_run(
                 outputs=tuple(outputs),
                 final_output="",
                 error=response.error,
+                events=tuple(events),
             )
 
         logger.info(f"Agent response output: {response.output}")
@@ -113,6 +121,7 @@ def i_orchestrator_run(
                 iterations=iteration_number,
                 outputs=tuple(outputs),
                 final_output=response.output,
+                events=tuple(events),
             )
 
     return OrchestratorResult(
@@ -121,4 +130,5 @@ def i_orchestrator_run(
         outputs=tuple(outputs),
         final_output=outputs[-1] if outputs else "",
         error="Maximum iterations reached before completion.",
+        events=tuple(events),
     )
