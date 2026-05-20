@@ -4,15 +4,36 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, Sequence
+from typing import Any, Mapping, Protocol, Sequence
 
 COMPLETE_TOKEN = "<promise>COMPLETE</promise>"
+
+
+@dataclass(frozen=True)
+class AgentProviderEvent:
+    event_type: str
+    item_type: str = ""
+    text: str = ""
+    status: str = ""
+    session_id: str = ""
+    raw: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
 class AgentResponse:
     output: str
     error: str | None = None
+    events: tuple[AgentProviderEvent, ...] = ()
+
+
+@dataclass(frozen=True)
+class _CodexStructuredParseResult:
+    structured_output_found: bool
+    malformed: bool = False
+    events: tuple[AgentProviderEvent, ...] = ()
+    raw_events: tuple[dict[str, Any], ...] = ()
+    output_text: str = ""
+    error_text: str = ""
 
 
 class AgentProvider(Protocol):
@@ -120,21 +141,36 @@ class CodexProvider:
             command,
             stdin_text=prompt,
         )
+        stdout_text = str(getattr(command_result, "stdout", ""))
+        structured_parse_result = _codex_parse_structured_stdout(stdout_text)
 
         output = _codex_output_from_result(
-            stdout_text=str(getattr(command_result, "stdout", "")),
+            stdout_text=stdout_text,
             final_output_path=self.final_output_path,
+            structured_parse_result=structured_parse_result,
         )
 
+        if structured_parse_result.malformed:
+            return AgentResponse(
+                output=output,
+                error=structured_parse_result.error_text,
+                events=structured_parse_result.events,
+            )
+
         if getattr(command_result, "succeeded", False):
-            return AgentResponse(output=output)
+            return AgentResponse(
+                output=output,
+                events=structured_parse_result.events,
+            )
 
         return AgentResponse(
             output=output,
             error=_codex_error_message(
                 command_result=command_result,
                 final_output_path=self.final_output_path,
+                structured_parse_result=structured_parse_result,
             ),
+            events=structured_parse_result.events,
         )
 
 
@@ -214,11 +250,14 @@ class FakeTestAgentProvider:
 def _codex_output_from_result(
     stdout_text: str,
     final_output_path: Path,
+    structured_parse_result: _CodexStructuredParseResult | None = None,
 ) -> str:
-    jsonl_output = _codex_agent_message_from_jsonl(stdout_text)
+    parse_result = structured_parse_result
+    if parse_result is None:
+        parse_result = _codex_parse_structured_stdout(stdout_text)
 
-    if jsonl_output:
-        return jsonl_output
+    if parse_result.output_text:
+        return parse_result.output_text
 
     final_output_file_text = _read_text_if_file_exists(final_output_path)
 
@@ -229,61 +268,164 @@ def _codex_output_from_result(
 
 
 def _codex_agent_message_from_jsonl(stdout_text: str) -> str:
-    events = _parse_jsonl_events(stdout_text)
+    parse_result = _codex_parse_structured_stdout(stdout_text)
 
-    if not events:
+    if parse_result.malformed:
         return ""
 
-    agent_messages: list[str] = []
-
-    for event in events:
-        message_text = _agent_message_text_from_event(event)
-
-        if message_text:
-            agent_messages.append(message_text)
-
-    return "\n".join(agent_messages).strip()
+    return parse_result.output_text
 
 
 def _parse_jsonl_events(stdout_text: str) -> tuple[dict[str, Any], ...]:
-    events: list[dict[str, Any]] = []
+    parse_result = _codex_parse_structured_stdout(stdout_text)
 
-    for line in stdout_text.splitlines():
+    if parse_result.malformed:
+        return ()
+
+    return parse_result.raw_events
+
+
+def _codex_parse_structured_stdout(stdout_text: str) -> _CodexStructuredParseResult:
+    events: list[AgentProviderEvent] = []
+    raw_events: list[dict[str, Any]] = []
+    structured_output_found = False
+
+    for line_number, line in enumerate(stdout_text.splitlines(), start=1):
         cleaned_line = line.strip()
 
         if not cleaned_line:
             continue
 
+        if not structured_output_found and not _line_looks_like_jsonl(cleaned_line):
+            return _CodexStructuredParseResult(structured_output_found=False)
+
         try:
             parsed_line = json.loads(cleaned_line)
-        except json.JSONDecodeError:
-            return ()
+        except json.JSONDecodeError as error:
+            return _malformed_codex_parse_result(
+                events=tuple(events),
+                raw_events=tuple(raw_events),
+                line_number=line_number,
+                reason=error.msg,
+            )
 
-        if isinstance(parsed_line, dict):
-            events.append(parsed_line)
+        if not isinstance(parsed_line, dict):
+            return _malformed_codex_parse_result(
+                events=tuple(events),
+                raw_events=tuple(raw_events),
+                line_number=line_number,
+                reason="expected a JSON object",
+            )
 
-    return tuple(events)
+        structured_output_found = True
+        raw_events.append(parsed_line)
+        events.append(_codex_normalize_event(parsed_line))
+
+    if not structured_output_found:
+        return _CodexStructuredParseResult(structured_output_found=False)
+
+    event_tuple = tuple(events)
+    return _CodexStructuredParseResult(
+        structured_output_found=True,
+        events=event_tuple,
+        raw_events=tuple(raw_events),
+        output_text=_codex_final_text_from_events(event_tuple),
+        error_text=_codex_error_text_from_events(event_tuple),
+    )
 
 
-def _agent_message_text_from_event(event: dict[str, Any]) -> str:
+def _line_looks_like_jsonl(line: str) -> bool:
+    return line.startswith("{") or line.startswith("[")
+
+
+def _malformed_codex_parse_result(
+    *,
+    events: tuple[AgentProviderEvent, ...],
+    raw_events: tuple[dict[str, Any], ...],
+    line_number: int,
+    reason: str,
+) -> _CodexStructuredParseResult:
+    error_text = f"Malformed Codex structured output on line {line_number}: {reason}."
+    return _CodexStructuredParseResult(
+        structured_output_found=True,
+        malformed=True,
+        events=events,
+        raw_events=raw_events,
+        output_text=_codex_final_text_from_events(events),
+        error_text=error_text,
+    )
+
+
+def _codex_normalize_event(event: dict[str, Any]) -> AgentProviderEvent:
     event_type = str(event.get("type", ""))
+    session_id = _codex_session_id_from_event(event)
+    status = str(event.get("status", ""))
+    item_type = ""
+    text = ""
 
-    if event_type == "item.completed":
+    if event_type.startswith("item."):
         item = event.get("item", {})
+        if isinstance(item, dict):
+            item_type = str(item.get("type", ""))
+            status = str(item.get("status", status))
+            text = _text_from_codex_payload(item)
+    elif event_type in {"turn.failed", "error"}:
+        text = _codex_error_text_from_event(event)
+    else:
+        text = _text_from_codex_payload(event)
 
-        if not isinstance(item, dict):
-            return ""
+    return AgentProviderEvent(
+        event_type=event_type,
+        item_type=item_type,
+        text=text,
+        status=status,
+        session_id=session_id,
+        raw=event,
+    )
 
-        item_type = str(item.get("type", ""))
-        item_role = str(item.get("role", ""))
 
-        if item_type not in {"agent_message", "message"} and item_role != "assistant":
-            return ""
+def _codex_session_id_from_event(event: dict[str, Any]) -> str:
+    for key in ("thread_id", "session_id"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
 
-        return _text_from_codex_payload(item)
+    thread = event.get("thread")
+    if isinstance(thread, dict):
+        thread_id = thread.get("id")
+        if isinstance(thread_id, str) and thread_id.strip():
+            return thread_id.strip()
 
-    if event_type == "turn.completed":
-        return _text_from_codex_payload(event)
+    return ""
+
+
+def _codex_final_text_from_events(events: tuple[AgentProviderEvent, ...]) -> str:
+    output_parts = [
+        event.text
+        for event in events
+        if _codex_event_is_agent_message(event) and event.text
+    ]
+
+    return "\n".join(output_parts).strip()
+
+
+def _codex_event_is_agent_message(event: AgentProviderEvent) -> bool:
+    if event.event_type == "item.completed" and event.item_type in {
+        "agent_message",
+        "message",
+    }:
+        return True
+
+    if event.event_type == "turn.completed" and event.text:
+        return True
+
+    return False
+
+
+def _codex_error_text_from_events(events: tuple[AgentProviderEvent, ...]) -> str:
+    for event in events:
+        if event.event_type in {"turn.failed", "error"} and event.text:
+            return event.text
 
     return ""
 
@@ -324,6 +466,7 @@ def _text_from_codex_payload(payload: dict[str, Any]) -> str:
 def _codex_error_message(
     command_result: Any,
     final_output_path: Path,
+    structured_parse_result: _CodexStructuredParseResult | None = None,
 ) -> str:
     stderr_text = str(getattr(command_result, "stderr", "")).strip()
     stdout_text = str(getattr(command_result, "stdout", "")).strip()
@@ -332,10 +475,15 @@ def _codex_error_message(
     if stderr_text:
         return stderr_text
 
-    jsonl_error = _codex_error_from_jsonl(stdout_text)
+    parse_result = structured_parse_result
+    if parse_result is None:
+        parse_result = _codex_parse_structured_stdout(stdout_text)
 
-    if jsonl_error:
-        return jsonl_error
+    if parse_result.malformed:
+        return parse_result.error_text
+
+    if parse_result.error_text:
+        return parse_result.error_text
 
     final_output_file_text = _read_text_if_file_exists(final_output_path)
 
@@ -349,29 +497,30 @@ def _codex_error_message(
 
 
 def _codex_error_from_jsonl(stdout_text: str) -> str:
-    events = _parse_jsonl_events(stdout_text)
+    parse_result = _codex_parse_structured_stdout(stdout_text)
 
-    for event in events:
-        event_type = str(event.get("type", ""))
+    if parse_result.malformed:
+        return parse_result.error_text
 
-        if event_type not in {"turn.failed", "error"}:
-            continue
+    return parse_result.error_text
 
-        error_value = event.get("error")
 
-        if isinstance(error_value, str) and error_value.strip():
-            return error_value.strip()
+def _codex_error_text_from_event(event: dict[str, Any]) -> str:
+    error_value = event.get("error")
 
-        if isinstance(error_value, dict):
-            error_message = error_value.get("message")
+    if isinstance(error_value, str) and error_value.strip():
+        return error_value.strip()
 
-            if isinstance(error_message, str) and error_message.strip():
-                return error_message.strip()
+    if isinstance(error_value, dict):
+        error_message = error_value.get("message")
 
-        message = event.get("message")
+        if isinstance(error_message, str) and error_message.strip():
+            return error_message.strip()
 
-        if isinstance(message, str) and message.strip():
-            return message.strip()
+    message = event.get("message")
+
+    if isinstance(message, str) and message.strip():
+        return message.strip()
 
     return ""
 
