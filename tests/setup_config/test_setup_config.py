@@ -13,6 +13,7 @@ from ai_coder.setup_config import (
     DEFAULT_TEST_COMMAND,
     DEFAULT_PROVIDER_ENV_ALLOWLIST,
     DEFAULT_PROVIDER_SECRET_ENV_ALLOWLIST,
+    SUPPORTED_AGENT_NAMES,
     c_setup_config,
 )
 
@@ -496,6 +497,56 @@ def test_setup_config_local_mode_ignores_missing_dockerfile_path(
     config = _fresh_config()
 
     config.validate_initialization()
+
+
+def test_setup_config_supported_agent_names_include_codex() -> None:
+    assert SUPPORTED_AGENT_NAMES == {"mock", "codex"}
+
+
+def test_setup_config_validate_agent_provider_accepts_mock_and_codex(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    for agent_name in ("mock", "codex"):
+        monkeypatch.setenv("RALPH_AGENT", agent_name)
+        monkeypatch.setenv("CODEX_COMMAND", "codex")
+        config = _fresh_config()
+
+        config.validate_agent_provider()
+
+
+def test_setup_config_validate_agent_provider_rejects_unknown_agent(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_AGENT", "claude")
+
+    config = _fresh_config()
+
+    with pytest.raises(
+        ValueError,
+        match="RALPH_AGENT must be 'mock' or 'codex'",
+    ):
+        config.validate_agent_provider()
+
+
+def test_setup_config_reads_codex_command_from_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_AGENT", "codex")
+    monkeypatch.setenv("CODEX_COMMAND", "codex")
+
+    config = _fresh_config()
+
+    assert config.codex_command == "codex"
 
 
 def test_setup_config_codex_mode_requires_codex_command(

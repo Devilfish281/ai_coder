@@ -3553,6 +3553,23 @@ def test_ralph_uses_agent_provider_create_seam_when_no_provider_is_injected(
     assert seam_calls[0]["worktree_path"] == worktree_path
     assert seam_calls[0]["codex_command"] == "codex"
     assert seam_calls[0]["final_output_path"] is None
+
+    seam_call_text = " ".join(str(value) for value in seam_calls[0].values())
+    forbidden_codex_fragments = (
+        "exec",
+        "--cd",
+        "--sandbox",
+        "workspace-write",
+        "--color",
+        "--json",
+        "--output-last-message",
+        "--full-auto",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--yolo",
+    )
+    for forbidden_fragment in forbidden_codex_fragments:
+        assert forbidden_fragment not in seam_call_text
+
     assert fake_provider.prompts
     assert (
         "RALPH should create providers through the public seam."

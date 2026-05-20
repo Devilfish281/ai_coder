@@ -212,6 +212,8 @@ def test_codex_provider_passes_prompt_through_stdin(tmp_path) -> None:
 
     assert result.error is None
     assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert provider.prompts == [prompt]
+    assert provider.run_count == 1
     assert prompt not in command
     assert prompt not in command_text
     assert command[-1] == "-"
@@ -435,3 +437,128 @@ def test_agent_provider_create_codex_keeps_prompt_out_of_command_args(tmp_path) 
     assert sandbox_handle.calls[0]["stdin_text"] == prompt
     assert prompt not in command
     assert prompt not in command_text
+
+
+def test_codex_provider_uses_jsonl_error_when_stderr_is_empty(tmp_path) -> None:
+    stdout = (
+        json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "message": "Codex JSONL failure.",
+                },
+            }
+        )
+        + "\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=2,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #39")
+
+    assert result.output == stdout
+    assert result.error == "Codex JSONL failure."
+
+
+def test_codex_provider_uses_output_last_message_file_as_error_when_command_fails(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_output_path.write_text(
+        "Failure details from Codex final message file.",
+        encoding="utf-8",
+    )
+    stdout = json.dumps({"type": "thread.started"}) + "\n"
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=4,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #39")
+
+    assert result.output == "Failure details from Codex final message file."
+    assert result.error == "Failure details from Codex final message file."
+
+
+def test_codex_provider_uses_plain_stdout_as_error_when_stderr_is_empty(
+    tmp_path,
+) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Plain Codex failure output.",
+            stderr="",
+            exit_code=3,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #39")
+
+    assert result.output == "Plain Codex failure output."
+    assert result.error == "Plain Codex failure output."
+
+
+def test_codex_provider_uses_exit_code_error_when_no_failure_output_exists(
+    tmp_path,
+) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="",
+            stderr="",
+            exit_code=9,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #39")
+
+    assert result.output == ""
+    assert result.error == "Codex exited with code 9."
+
+
+def test_agent_provider_create_rejects_empty_codex_command(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="",
+            stderr="",
+            exit_code=0,
+        )
+    )
+
+    with pytest.raises(ValueError, match="codex_command cannot be empty"):
+        i_agent_provider_create(
+            provider_name="codex",
+            sandbox_handle=sandbox_handle,
+            worktree_path=tmp_path,
+            codex_command="   ",
+        )
