@@ -1,6 +1,14 @@
+# tests/orchestrator/test_orchestrator.py
 import pytest
 
-from ai_coder.agent_provider import AgentResponse, MockAgentProvider
+from ai_coder.agent_provider import (
+    AgentProviderEvent,
+    AgentResponse,
+    MockAgentProvider,
+    NORMALIZED_EVENT_TYPE_ERROR,
+    NORMALIZED_EVENT_TYPE_TEXT,
+)
+
 from ai_coder.orchestrator import i_orchestrator_run
 
 
@@ -42,6 +50,51 @@ def test_orchestrator_stops_when_agent_returns_error() -> None:
     assert result.iterations == 1
     assert result.error == "agent failed"
     assert result.outputs == ()
+
+
+def test_orchestrator_preserves_provider_events_on_success() -> None:
+    event = AgentProviderEvent(
+        event_type="item.completed",
+        item_type="agent_message",
+        text="Finished\n<promise>COMPLETE</promise>",
+        normalized_type=NORMALIZED_EVENT_TYPE_TEXT,
+    )
+    provider = MockAgentProvider(
+        responses=[
+            AgentResponse(
+                output="Finished\n<promise>COMPLETE</promise>",
+                events=(event,),
+            )
+        ]
+    )
+
+    result = i_orchestrator_run(provider, "prompt", max_iterations=3)
+
+    assert result.completed is True
+    assert result.events == (event,)
+
+
+def test_orchestrator_preserves_provider_events_on_agent_error() -> None:
+    event = AgentProviderEvent(
+        event_type="error",
+        text="agent failed",
+        normalized_type=NORMALIZED_EVENT_TYPE_ERROR,
+    )
+    provider = MockAgentProvider(
+        responses=[
+            AgentResponse(
+                output="",
+                error="agent failed",
+                events=(event,),
+            )
+        ]
+    )
+
+    result = i_orchestrator_run(provider, "prompt", max_iterations=3)
+
+    assert result.completed is False
+    assert result.error == "agent failed"
+    assert result.events == (event,)
 
 
 def test_orchestrator_rejects_invalid_iteration_limit() -> None:

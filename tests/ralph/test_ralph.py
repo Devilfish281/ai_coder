@@ -1,5 +1,12 @@
 # tests/ralph/test_ralph.py
-from ai_coder.agent_provider import COMPLETE_TOKEN, MockAgentProvider
+from ai_coder.agent_provider import (
+    COMPLETE_TOKEN,
+    AgentProviderEvent,
+    AgentResponse,
+    MockAgentProvider,
+    NORMALIZED_EVENT_TYPE_TEXT,
+)
+
 from ai_coder.sync_out import SyncMergeResult
 
 
@@ -3410,6 +3417,59 @@ def _patch_successful_project_setup(monkeypatch) -> None:
         "i_project_setup_run",
         fake_project_setup_run,
     )
+
+
+def test_ralph_displays_normalized_provider_events(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    event = AgentProviderEvent(
+        event_type="item.completed",
+        item_type="agent_message",
+        text="Codex normalized event output.",
+        normalized_type=NORMALIZED_EVENT_TYPE_TEXT,
+        raw={"secret": "raw json should not display"},
+    )
+    provider = MockAgentProvider(
+        responses=[
+            AgentResponse(
+                output="Codex normalized event output.\n<promise>COMPLETE</promise>",
+                events=(event,),
+            )
+        ]
+    )
+    display = SilentDisplay()
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=43,
+                title="Add CodexProvider stream event normalization",
+                body="RALPH should display normalized provider events.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.orchestrator_result is not None
+    assert result.orchestrator_result.events == (event,)
+    assert "Agent text: Codex normalized event output." in display_text
+    assert "raw json should not display" not in display_text
 
 
 def test_ralph_displays_provider_output_summary_without_prompt_body(

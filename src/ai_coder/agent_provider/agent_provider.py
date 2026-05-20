@@ -9,6 +9,13 @@ from typing import Any, Mapping, Protocol, Sequence
 COMPLETE_TOKEN = "<promise>COMPLETE</promise>"
 
 
+NORMALIZED_EVENT_TYPE_TEXT = "text"
+NORMALIZED_EVENT_TYPE_TOOL_CALL = "tool_call"
+NORMALIZED_EVENT_TYPE_RESULT = "result"
+NORMALIZED_EVENT_TYPE_ERROR = "error"
+NORMALIZED_EVENT_TYPE_SESSION = "session"
+
+
 @dataclass(frozen=True)
 class AgentProviderEvent:
     event_type: str
@@ -16,6 +23,7 @@ class AgentProviderEvent:
     text: str = ""
     status: str = ""
     session_id: str = ""
+    normalized_type: str = ""
     raw: Mapping[str, object] | None = None
 
 
@@ -150,17 +158,22 @@ class CodexProvider:
             structured_parse_result=structured_parse_result,
         )
 
+        response_events = _codex_events_from_parse_or_plain_stdout(
+            output=output,
+            structured_parse_result=structured_parse_result,
+        )
+
         if structured_parse_result.malformed:
             return AgentResponse(
                 output=output,
                 error=structured_parse_result.error_text,
-                events=structured_parse_result.events,
+                events=response_events,
             )
 
         if getattr(command_result, "succeeded", False):
             return AgentResponse(
                 output=output,
-                events=structured_parse_result.events,
+                events=response_events,
             )
 
         return AgentResponse(
@@ -170,7 +183,7 @@ class CodexProvider:
                 final_output_path=self.final_output_path,
                 structured_parse_result=structured_parse_result,
             ),
-            events=structured_parse_result.events,
+            events=response_events,
         )
 
 
@@ -353,10 +366,11 @@ def _malformed_codex_parse_result(
     reason: str,
 ) -> _CodexStructuredParseResult:
     error_text = f"Malformed Codex structured output on line {line_number}: {reason}."
+    error_event = _codex_synthetic_error_event(error_text)
     return _CodexStructuredParseResult(
         structured_output_found=True,
         malformed=True,
-        events=events,
+        events=(*events, error_event),
         raw_events=raw_events,
         output_text=_codex_final_text_from_events(events),
         error_text=error_text,
@@ -387,7 +401,85 @@ def _codex_normalize_event(event: dict[str, Any]) -> AgentProviderEvent:
         text=text,
         status=status,
         session_id=session_id,
+        normalized_type=_codex_normalized_type(
+            event_type=event_type,
+            item_type=item_type,
+            status=status,
+            session_id=session_id,
+        ),
         raw=event,
+    )
+
+
+def _codex_events_from_parse_or_plain_stdout(
+    *,
+    output: str,
+    structured_parse_result: _CodexStructuredParseResult,
+) -> tuple[AgentProviderEvent, ...]:
+    if structured_parse_result.structured_output_found:
+        return structured_parse_result.events
+
+    if output.strip():
+        return (_codex_synthetic_text_event(output),)
+
+    return ()
+
+
+def _codex_synthetic_text_event(text: str) -> AgentProviderEvent:
+    return AgentProviderEvent(
+        event_type="plain.stdout",
+        text=text,
+        normalized_type=NORMALIZED_EVENT_TYPE_TEXT,
+    )
+
+
+def _codex_synthetic_error_event(text: str) -> AgentProviderEvent:
+    return AgentProviderEvent(
+        event_type="parse.error",
+        text=text,
+        normalized_type=NORMALIZED_EVENT_TYPE_ERROR,
+    )
+
+
+def _codex_normalized_type(
+    *,
+    event_type: str,
+    item_type: str,
+    status: str,
+    session_id: str,
+) -> str:
+    if event_type in {"turn.failed", "error"}:
+        return NORMALIZED_EVENT_TYPE_ERROR
+
+    if event_type == "thread.started" or session_id:
+        return NORMALIZED_EVENT_TYPE_SESSION
+
+    if event_type == "turn.completed":
+        return NORMALIZED_EVENT_TYPE_RESULT
+
+    if event_type.startswith("item."):
+        if item_type in {"agent_message", "message", "reasoning"}:
+            return NORMALIZED_EVENT_TYPE_TEXT
+
+        if _codex_item_type_is_tool_call_like(item_type) and status == "completed":
+            return NORMALIZED_EVENT_TYPE_RESULT
+
+        if _codex_item_type_is_tool_call_like(item_type):
+            return NORMALIZED_EVENT_TYPE_TOOL_CALL
+
+    return ""
+
+
+def _codex_item_type_is_tool_call_like(item_type: str) -> bool:
+    lowered_item_type = item_type.lower()
+    return any(
+        marker in lowered_item_type
+        for marker in (
+            "tool",
+            "command",
+            "web_search",
+            "file_change",
+        )
     )
 
 
@@ -423,7 +515,11 @@ def _codex_event_is_agent_message(event: AgentProviderEvent) -> bool:
     }:
         return True
 
-    if event.event_type == "turn.completed" and event.text:
+    if (
+        event.normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+        and event.event_type == "turn.completed"
+        and event.text
+    ):
         return True
 
     return False
@@ -431,6 +527,9 @@ def _codex_event_is_agent_message(event: AgentProviderEvent) -> bool:
 
 def _codex_error_text_from_events(events: tuple[AgentProviderEvent, ...]) -> str:
     for event in events:
+        if event.normalized_type == NORMALIZED_EVENT_TYPE_ERROR and event.text:
+            return event.text
+
         if event.event_type in {"turn.failed", "error"} and event.text:
             return event.text
 

@@ -53,6 +53,7 @@ from typing import Any, Iterable
 from ai_coder.display import (
     DisplayProtocol,
     SilentDisplay,
+    i_display_agent_events,
     i_display_cleanup_result,
     i_display_command_failure,
     i_display_commit_result,
@@ -60,7 +61,6 @@ from ai_coder.display import (
     i_display_selected_issue,
     i_display_test_result,
 )
-
 
 from ai_coder.agent_provider import (
     AgentProvider,
@@ -513,15 +513,22 @@ def i_ralph_run(
         "Final agent output summary: %s",
         _short_display_text(orchestrator_result.final_output),
     )
+
     logger.info(
         "Agent output count: %d",
         len(orchestrator_result.outputs),
     )
+    logger.info(
+        "Agent event count: %d",
+        len(orchestrator_result.events),
+    )
+    i_display_agent_events(active_display, orchestrator_result.events)
 
     logger.info(
         "Agent provider used: %s",
         selected_agent_provider.__class__.__name__,
     )
+
     active_display.i_display_message(
         f"Agent completed: {orchestrator_result.completed}"
     )

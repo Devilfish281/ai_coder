@@ -1,12 +1,19 @@
 # tests/display/test_display.py
-from ai_coder.display import ConsoleDisplay, SilentDisplay
-
-
+# tests/display/test_display.py
 from pathlib import Path
 
+from ai_coder.agent_provider import (
+    AgentProviderEvent,
+    NORMALIZED_EVENT_TYPE_ERROR,
+    NORMALIZED_EVENT_TYPE_RESULT,
+    NORMALIZED_EVENT_TYPE_SESSION,
+    NORMALIZED_EVENT_TYPE_TEXT,
+    NORMALIZED_EVENT_TYPE_TOOL_CALL,
+)
 from ai_coder.display import (
     ConsoleDisplay,
     SilentDisplay,
+    i_display_agent_events,
     i_display_cleanup_result,
     i_display_command_failure,
     i_display_commit_result,
@@ -176,3 +183,61 @@ def test_display_cleanup_result_shows_removed_worktree_path() -> None:
     )
 
     assert display.messages == ["Removed worktree: worktree"]
+
+
+def test_display_agent_events_shows_readable_normalized_messages() -> None:
+    display = SilentDisplay()
+    events = (
+        AgentProviderEvent(
+            event_type="thread.started",
+            session_id="thread_041",
+            normalized_type=NORMALIZED_EVENT_TYPE_SESSION,
+            raw={"secret": "raw json should not display"},
+        ),
+        AgentProviderEvent(
+            event_type="item.completed",
+            item_type="agent_message",
+            text="Codex finished the issue.",
+            normalized_type=NORMALIZED_EVENT_TYPE_TEXT,
+            raw={"secret": "raw json should not display"},
+        ),
+        AgentProviderEvent(
+            event_type="item.started",
+            item_type="command_execution",
+            status="started",
+            normalized_type=NORMALIZED_EVENT_TYPE_TOOL_CALL,
+            raw={"secret": "raw json should not display"},
+        ),
+        AgentProviderEvent(
+            event_type="item.completed",
+            item_type="command_execution",
+            text="pytest passed",
+            normalized_type=NORMALIZED_EVENT_TYPE_RESULT,
+            raw={"secret": "raw json should not display"},
+        ),
+        AgentProviderEvent(
+            event_type="error",
+            text="Codex JSONL failure.",
+            normalized_type=NORMALIZED_EVENT_TYPE_ERROR,
+            raw={"secret": "raw json should not display"},
+        ),
+    )
+
+    i_display_agent_events(display, events)
+
+    assert display.messages == [
+        "Agent session: thread_041",
+        "Agent text: Codex finished the issue.",
+        "Agent tool call: command_execution started",
+        "Agent result: pytest passed",
+        "Agent error: Codex JSONL failure.",
+    ]
+    assert "raw json should not display" not in "\n".join(display.messages)
+
+
+def test_display_agent_events_ignores_empty_event_list() -> None:
+    display = SilentDisplay()
+
+    i_display_agent_events(display, ())
+
+    assert display.messages == []

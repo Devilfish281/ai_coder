@@ -4,6 +4,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Protocol
 
+from ai_coder.agent_provider import (
+    AgentProviderEvent,
+    NORMALIZED_EVENT_TYPE_ERROR,
+    NORMALIZED_EVENT_TYPE_RESULT,
+    NORMALIZED_EVENT_TYPE_SESSION,
+    NORMALIZED_EVENT_TYPE_TEXT,
+    NORMALIZED_EVENT_TYPE_TOOL_CALL,
+)
+
 _EMPTY_OUTPUT_TEXT = "<empty>"
 _REDACTED_SECRET_TEXT = "<redacted>"
 
@@ -60,6 +69,19 @@ def i_display_selected_issue(
     issue_title: str,
 ) -> None:
     display.i_display_message(f"Selected issue #{issue_number}: {issue_title}")
+
+
+def i_display_agent_events(
+    display: DisplayProtocol,
+    events: Iterable[AgentProviderEvent],
+) -> None:
+    for event in events:
+        message = _format_agent_event_message(event)
+
+        if not message:
+            continue
+
+        display.i_display_message(message)
 
 
 def i_display_command_failure(
@@ -141,6 +163,53 @@ def i_display_cleanup_result(
 
     if message:
         display.i_display_message(message)
+
+
+def _format_agent_event_message(event: AgentProviderEvent) -> str:
+    if event.normalized_type == NORMALIZED_EVENT_TYPE_SESSION:
+        return _format_agent_session_event(event)
+
+    if event.normalized_type == NORMALIZED_EVENT_TYPE_TEXT:
+        return _format_agent_text_event(event)
+
+    if event.normalized_type == NORMALIZED_EVENT_TYPE_TOOL_CALL:
+        return _format_agent_tool_call_event(event)
+
+    if event.normalized_type == NORMALIZED_EVENT_TYPE_RESULT:
+        return _format_agent_result_event(event)
+
+    if event.normalized_type == NORMALIZED_EVENT_TYPE_ERROR:
+        return _format_agent_error_event(event)
+
+    return ""
+
+
+def _format_agent_session_event(event: AgentProviderEvent) -> str:
+    if event.session_id:
+        return f"Agent session: {event.session_id}"
+
+    return "Agent session event."
+
+
+def _format_agent_text_event(event: AgentProviderEvent) -> str:
+    text = _format_output_text(event.text)
+    return f"Agent text: {text}"
+
+
+def _format_agent_tool_call_event(event: AgentProviderEvent) -> str:
+    tool_name = event.item_type or event.event_type or "unknown"
+    status = event.status or "started"
+    return f"Agent tool call: {tool_name} {status}"
+
+
+def _format_agent_result_event(event: AgentProviderEvent) -> str:
+    result_text = event.text or event.item_type or event.event_type
+    return f"Agent result: {_format_output_text(result_text)}"
+
+
+def _format_agent_error_event(event: AgentProviderEvent) -> str:
+    error_text = event.text or event.event_type
+    return f"Agent error: {_format_output_text(error_text)}"
 
 
 def _display_command_diagnostics(
