@@ -8,7 +8,7 @@ from ai_coder.agent_provider import (
 )
 
 from ai_coder.sync_out import SyncMergeResult
-
+from ai_coder.pull_request_draft import PullRequestDraftResult
 
 from ai_coder.github_issues import GitHubIssue
 from ai_coder.repository_context import (
@@ -2425,6 +2425,236 @@ def test_ralph_returns_blocked_with_skip_reasons_when_no_actionable_issue_exists
     assert "Skipped issue #8 because it is already assigned." in result.message
     assert "Skipped issue #7: vague" in display_text
     assert "Skipped issue #8: assigned" in display_text
+
+
+def test_ralph_returns_and_displays_pull_request_draft_placeholder_after_success(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+
+    display = SilentDisplay()
+    commit_hash = "prdraftcommit123"
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+    pull_request_draft_calls: list[dict[str, object]] = []
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        return SyncMergeResult(
+            merged=True,
+            committed=True,
+            failed=False,
+            commit_hash=commit_hash,
+            worktree_path=worktree_path,
+            has_changes=True,
+            has_uncommitted_changes=False,
+            message=f"Commit created: {commit_hash}.",
+        )
+
+    def fake_pull_request_draft_build(**kwargs):
+        pull_request_draft_calls.append(kwargs)
+
+        return PullRequestDraftResult(
+            ready=True,
+            created=False,
+            enabled=False,
+            future_disabled=True,
+            issue_number=kwargs["issue_number"],
+            issue_title=kwargs["issue_title"],
+            base_branch=kwargs["base_branch"],
+            head_branch=kwargs["head_branch"],
+            commit_hash=kwargs["commit_hash"],
+            title=(
+                f"RALPH: issue #{kwargs['issue_number']} - " f"{kwargs['issue_title']}"
+            ),
+            body=(
+                f"Refs #{kwargs['issue_number']}\n\n"
+                f"Commit: {kwargs['commit_hash']}\n"
+                "Verification: poetry run pytest passed.\n\n"
+                "Pull request creation is future/disabled in this workflow slice.\n"
+                "No pull request was created."
+            ),
+            suggested_command=(
+                "gh pr create --draft --base main "
+                f"--head {kwargs['head_branch']} "
+                "--title <reviewed-title> "
+                "--body-file .ai_coder/pr_draft_body.md"
+            ),
+            message=(
+                "Pull request workflow is future/disabled. "
+                "Draft metadata is ready, but no pull request was created."
+            ),
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_pull_request_draft_build",
+        fake_pull_request_draft_build,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=50,
+                title="Add pull request draft workflow placeholder",
+                body="RALPH should show a future PR draft placeholder.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == "complete"
+    assert result.pull_request_draft_result is not None
+    assert result.pull_request_draft_result.ready is True
+    assert result.pull_request_draft_result.created is False
+    assert result.pull_request_draft_result.future_disabled is True
+    assert result.pull_request_draft_result.commit_hash == commit_hash
+    assert len(pull_request_draft_calls) == 1
+    assert pull_request_draft_calls[0]["issue_number"] == 50
+    assert pull_request_draft_calls[0]["issue_title"] == (
+        "Add pull request draft workflow placeholder"
+    )
+    assert pull_request_draft_calls[0]["commit_hash"] == commit_hash
+    assert pull_request_draft_calls[0]["tests_passed"] is True
+    assert pull_request_draft_calls[0]["committed"] is True
+    assert pull_request_draft_calls[0]["final_status"] == "complete"
+    assert "Phase: pull_request" in display_text
+    assert "Pull request workflow: future/disabled." in display_text
+    assert "No pull request was created." in display_text
+    assert "Suggested PR command: gh pr create --draft" in display_text
+
+
+def test_ralph_returns_not_ready_pull_request_draft_placeholder_when_tests_fail(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    display = SilentDisplay()
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+    pull_request_draft_calls: list[dict[str, object]] = []
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return TestRunResult(
+            passed=False,
+            command=command or ("poetry", "run", "pytest"),
+            message="Tests failed through the sandbox seam.",
+            stdout="test stdout",
+            stderr="pytest failed",
+            exit_code=1,
+        )
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError("i_sync_out_merge() should not be called when tests fail.")
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. Tests failed.",
+        )
+
+    def fake_pull_request_draft_build(**kwargs):
+        pull_request_draft_calls.append(kwargs)
+
+        return PullRequestDraftResult(
+            ready=False,
+            created=False,
+            enabled=False,
+            future_disabled=True,
+            issue_number=kwargs["issue_number"],
+            issue_title=kwargs["issue_title"],
+            base_branch=kwargs["base_branch"],
+            head_branch=kwargs["head_branch"],
+            commit_hash=kwargs["commit_hash"],
+            title="",
+            body="",
+            suggested_command="",
+            message=(
+                "Pull request workflow skipped. RALPH did not complete with "
+                "tests passed and committed changes. No pull request was created."
+            ),
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_pull_request_draft_build",
+        fake_pull_request_draft_build,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=50,
+                title="Add pull request draft workflow placeholder",
+                body="RALPH should skip PR draft readiness when tests fail.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == "failed"
+    assert result.pull_request_draft_result is not None
+    assert result.pull_request_draft_result.ready is False
+    assert result.pull_request_draft_result.created is False
+    assert len(pull_request_draft_calls) == 1
+    assert pull_request_draft_calls[0]["tests_passed"] is False
+    assert pull_request_draft_calls[0]["committed"] is False
+    assert pull_request_draft_calls[0]["final_status"] == "failed"
+    assert "Phase: pull_request" in display_text
+    assert "Pull request workflow: skipped." in display_text
+    assert "No pull request was created." in display_text
+    assert f"Preserved worktree: {worktree_path}" in display_text
 
 
 def test_ralph_resolves_prompt_file_before_preprocessing(

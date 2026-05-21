@@ -60,8 +60,15 @@ from ai_coder.display import (
     i_display_commit_result,
     i_display_issue_skip_reasons,
     i_display_phase,
+    i_display_pull_request_draft,
     i_display_selected_issue,
     i_display_test_result,
+)
+
+
+from ai_coder.pull_request_draft import (
+    PullRequestDraftResult,
+    i_pull_request_draft_build,
 )
 
 
@@ -197,6 +204,7 @@ class RalphResult:
     completed: bool
     message: str
     status: str = RALPH_STATUS_INCOMPLETE
+    pull_request_draft_result: PullRequestDraftResult | None = None
 
 
 def i_ralph_run(
@@ -664,6 +672,43 @@ def i_ralph_run(
         "Step 11: Close the GitHub issue only after tests pass and the fix is committed."
     )
 
+    logger.info("Step 11a: Prepare future pull request draft metadata.")  #  Added Code
+    active_display.i_display_message(  #  Added Code
+        "Step 11a: Prepare future pull request draft metadata."  #  Added Code
+    )  #  Added Code
+    i_display_phase(active_display, "pull_request")  #  Added Code
+
+    pull_request_final_status = (  #  Added Code
+        RALPH_STATUS_COMPLETE  #  Added Code
+        if orchestrator_result.completed  #  Added Code
+        and test_result.passed  #  Added Code
+        and getattr(sync_result, "committed", False)  #  Added Code
+        and not getattr(sync_result, "failed", False)  #  Added Code
+        else RALPH_STATUS_FAILED  #  Added Code
+    )  #  Added Code
+
+    pull_request_draft_result = i_pull_request_draft_build(  #  Added Code
+        issue_number=selected_issue.number,  #  Added Code
+        issue_title=selected_issue.title,  #  Added Code
+        head_branch=worktree_result.branch_name,  #  Added Code
+        commit_hash=sync_result.commit_hash,  #  Added Code
+        base_branch="main",  #  Added Code
+        tests_passed=test_result.passed,  #  Added Code
+        committed=getattr(sync_result, "committed", False),  #  Added Code
+        final_status=pull_request_final_status,  #  Added Code
+        verification_command=_format_command_for_display(test_command),  #  Added Code
+    )  #  Added Code
+    i_display_pull_request_draft(
+        active_display, pull_request_draft_result
+    )  #  Added Code
+
+    logger.info(
+        "Step 11b: Close the GitHub issue only after tests pass and the fix is committed."
+    )
+    active_display.i_display_message(
+        "Step 11b: Close the GitHub issue only after tests pass and the fix is committed."
+    )
+
     close_result = i_github_issue_close(
         issue=selected_issue,
         tests_passed=test_result.passed,
@@ -756,6 +801,7 @@ def i_ralph_run(
         completed=result_status == RALPH_STATUS_COMPLETE,
         message=message_result,
         status=result_status,
+        pull_request_draft_result=pull_request_draft_result,
     )
 
 
