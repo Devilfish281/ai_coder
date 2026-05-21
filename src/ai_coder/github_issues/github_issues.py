@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -176,7 +177,7 @@ def _build_gh_issue_list_command(
         "--state",
         "open",
         "--json",
-        "number,title,body,labels,assignees",
+        "number,title,body,labels,assignees,state",  #  Changed Code
     ]
 
     if label and label.strip():
@@ -523,6 +524,24 @@ def _evaluate_issue_actionability(
             ),
         )
 
+    blocked_body_marker = _open_blocked_body_marker(issue, open_issue_numbers)
+    if blocked_body_marker is not None:
+        return _skip_reason(
+            issue=issue,
+            reason="blocked",
+            message=(
+                f"Skipped issue #{issue.number} because it is blocked by "
+                f"open issue #{blocked_body_marker}."
+            ),
+        )
+
+    if _issue_has_blocked_label(issue):
+        return _skip_reason(
+            issue=issue,
+            reason="blocked",
+            message=f"Skipped issue #{issue.number} because it is marked blocked.",
+        )
+
     if issue.assignees:
         return _skip_reason(
             issue=issue,
@@ -551,6 +570,30 @@ def _evaluate_issue_actionability(
         )
 
     return None
+
+
+def _issue_has_blocked_label(issue: GitHubIssue) -> bool:
+    return any(label.strip().lower() == "blocked" for label in issue.labels)
+
+
+def _open_blocked_body_marker(
+    issue: GitHubIssue,
+    open_issue_numbers: set[int],
+) -> int | None:
+    for blocker_number in _blocked_issue_numbers_from_body(issue.body):
+        if blocker_number in open_issue_numbers:
+            return blocker_number
+
+    return None
+
+
+def _blocked_issue_numbers_from_body(issue_body: str) -> tuple[int, ...]:
+    blocked_issue_numbers: list[int] = []
+
+    for match in re.finditer(r"\bblocked\s+by\s+#(\d+)\b", issue_body, re.IGNORECASE):
+        blocked_issue_numbers.append(int(match.group(1)))
+
+    return tuple(blocked_issue_numbers)
 
 
 def _issue_is_vague(issue: GitHubIssue) -> bool:
@@ -601,6 +644,7 @@ def _github_issue_from_gh_json(raw_issue: dict) -> GitHubIssue:
         title=str(raw_issue.get("title", "")),
         body=str(raw_issue.get("body", "")),
         labels=_labels_from_gh_json(raw_issue.get("labels", [])),
+        state=str(raw_issue.get("state", "open")),
         assignees=_assignees_from_gh_json(raw_issue.get("assignees", [])),
     )
 
@@ -636,21 +680,6 @@ def _assignees_from_gh_json(raw_assignees: object) -> tuple[str, ...]:
             assignee_names.append(assignee_name)
 
     return tuple(assignee_names)
-
-
-def _assignee_name_from_gh_json(raw_assignee: object) -> str:
-    if not isinstance(raw_assignee, dict):
-        return str(raw_assignee).strip()
-
-    login = str(raw_assignee.get("login", "")).strip()
-    if login:
-        return login
-
-    name = str(raw_assignee.get("name", "")).strip()
-    if name:
-        return name
-
-    return ""
 
 
 def _assignee_name_from_gh_json(raw_assignee: object) -> str:

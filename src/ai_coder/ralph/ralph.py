@@ -50,6 +50,7 @@ from pathlib import Path
 
 from typing import Any, Iterable
 
+
 from ai_coder.display import (
     DisplayProtocol,
     SilentDisplay,
@@ -57,10 +58,12 @@ from ai_coder.display import (
     i_display_cleanup_result,
     i_display_command_failure,
     i_display_commit_result,
+    i_display_issue_skip_reasons,
     i_display_phase,
     i_display_selected_issue,
     i_display_test_result,
 )
+
 
 from ai_coder.agent_provider import (
     AgentProvider,
@@ -77,7 +80,7 @@ from ai_coder.github_issues import (
     i_github_issue_close,
     i_github_issue_from_file,
     i_github_issue_list,
-    i_github_issue_select,
+    i_github_issue_select_actionable,
 )
 
 
@@ -297,20 +300,29 @@ def i_ralph_run(
     logger.info("Step 3: Pick one actionable issue.")
     active_display.i_display_message("Step 3: Pick one actionable issue.")
 
-    selected_issue = i_github_issue_select(resolved_issues)
+    selection_result = i_github_issue_select_actionable(resolved_issues)
+    i_display_issue_skip_reasons(
+        active_display,
+        selection_result.skipped_issues,
+    )
+    selected_issue = selection_result.selected_issue
 
     if selected_issue is None:
+        message_result = _format_no_actionable_issue_message(
+            selection_result.skipped_issues,
+        )
         active_display.i_display_message("No open actionable issue selected.")
         return RalphResult(
             selected_issue=None,
             prompt="",
             orchestrator_result=None,
             completed=False,
-            message="No open actionable issue selected.",
+            message=message_result,
             status=RALPH_STATUS_BLOCKED,
         )
 
     logger.info(f"Selected issue #{selected_issue.number}: {selected_issue.title}")
+
     i_display_selected_issue(
         active_display,
         issue_number=selected_issue.number,
@@ -1323,3 +1335,31 @@ def _format_issue_labels(labels: tuple[str, ...]) -> str:
     """
 
     return ", ".join(labels)
+
+
+def _format_no_actionable_issue_message(
+    skipped_issues: Iterable[object],
+) -> str:
+    message_parts = ["No open actionable issue selected."]
+
+    for skipped_issue in skipped_issues:
+        skip_message = str(getattr(skipped_issue, "message", "")).strip()
+
+        if skip_message:
+            message_parts.append(skip_message)
+
+    return "\n".join(message_parts)
+
+
+def _format_no_actionable_issue_message(
+    skipped_issues: Iterable[object],
+) -> str:
+    message_parts = ["No open actionable issue selected."]
+
+    for skipped_issue in skipped_issues:
+        skip_message = str(getattr(skipped_issue, "message", "")).strip()
+
+        if skip_message:
+            message_parts.append(skip_message)
+
+    return "\n".join(message_parts)
