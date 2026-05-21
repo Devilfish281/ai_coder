@@ -1,9 +1,7 @@
 # tests/display/test_display.py
 from pathlib import Path
 
-
-from ai_coder.github_issues import GitHubIssueSkipReason
-
+from ai_coder.github_issues import GitHubIssueCloseResult, GitHubIssueSkipReason
 
 from ai_coder.agent_provider import (
     AgentProviderEvent,
@@ -24,13 +22,10 @@ from ai_coder.display import (
     i_display_commit_result,
     i_display_issue_skip_reasons,
     i_display_phase,
-    i_display_pull_request_draft,
-    i_display_redact_text,
     i_display_selected_issue,
     i_display_test_result,
+    i_display_issue_close_result,
 )
-
-from ai_coder.pull_request_draft import PullRequestDraftResult
 
 
 def test_silent_display_stores_messages_without_printing(capsys) -> None:
@@ -319,80 +314,80 @@ def test_display_agent_events_ignores_empty_event_list() -> None:
     assert display.messages == []
 
 
-def test_display_pull_request_draft_shows_ready_placeholder_output() -> None:
+def test_display_issue_close_result_shows_ready_placeholder_output() -> None:
     display = SilentDisplay()
-    pull_request_draft_result = PullRequestDraftResult(
+    close_result = GitHubIssueCloseResult(
+        issue_number=51,
+        issue_title="Add safe issue close workflow placeholder",
+        closed=False,
         ready=True,
-        created=False,
         enabled=False,
+        dry_run=True,
         future_disabled=True,
-        issue_number=50,
-        issue_title="Add pull request draft workflow placeholder",
-        base_branch="main",
-        head_branch="ralph/issue-050-add-pr-draft-placeholder",
+        would_close=False,
         commit_hash="abc123def456",
-        title="RALPH: issue #50 - Add pull request draft workflow placeholder",
-        body=(
-            "Refs #50\n\n"
-            "Commit: abc123def456\n"
-            "Verification: poetry run pytest passed.\n\n"
-            "Pull request creation is future/disabled in this workflow slice.\n"
-            "No pull request was created."
-        ),
-        suggested_command=(
-            "gh pr create --draft --base main "
-            "--head ralph/issue-050-add-pr-draft-placeholder "
-            "--title <reviewed-title> "
-            "--body-file .ai_coder/pr_draft_body.md"
+        suggested_command='gh issue close 51 --comment "<reviewed close comment>"',
+        close_comment=(
+            "Completed by RALPH. Summary: Add safe issue close workflow placeholder. "
+            "Verification: poetry run pytest passed. Commit: abc123def456."
         ),
         message=(
-            "Pull request workflow is future/disabled. "
-            "Draft metadata is ready, but no pull request was created."
+            "Issue close workflow is future/disabled. Close metadata is ready, "
+            "but no GitHub issue was closed."
         ),
     )
 
-    i_display_pull_request_draft(display, pull_request_draft_result)
+    i_display_issue_close_result(display, close_result)
 
     assert display.messages == [
-        "Pull request workflow: future/disabled.",
-        "No pull request was created.",
-        "Draft PR title: RALPH: issue #50 - Add pull request draft workflow placeholder",
-        (
-            "Suggested PR command: gh pr create --draft --base main "
-            "--head ralph/issue-050-add-pr-draft-placeholder "
-            "--title <reviewed-title> "
-            "--body-file .ai_coder/pr_draft_body.md"
-        ),
+        "Issue close workflow: future/disabled.",
+        "No GitHub issue was closed.",
+        'Suggested issue close command: gh issue close 51 --comment "<reviewed close comment>"',
     ]
 
 
-def test_display_pull_request_draft_shows_skipped_placeholder_output() -> None:
+def test_display_issue_close_result_shows_skipped_output() -> None:
     display = SilentDisplay()
-    pull_request_draft_result = PullRequestDraftResult(
+    close_result = GitHubIssueCloseResult(
+        issue_number=51,
+        closed=False,
         ready=False,
-        created=False,
-        enabled=False,
-        future_disabled=True,
-        issue_number=50,
-        issue_title="Add pull request draft workflow placeholder",
-        base_branch="main",
-        head_branch="ralph/issue-050-add-pr-draft-placeholder",
-        commit_hash="",
-        title="",
-        body="",
-        suggested_command="",
+        blocked_reason="Issue close workflow skipped because tests did not pass.",
+        message="Issue close workflow skipped because tests did not pass.",
+    )
+
+    i_display_issue_close_result(display, close_result)
+
+    assert display.messages == [
+        "Issue close workflow: skipped.",
+        "Reason: Issue close workflow skipped because tests did not pass.",
+        "No GitHub issue was closed.",
+    ]
+
+
+def test_display_issue_close_result_shows_dry_run_output() -> None:
+    display = SilentDisplay()
+    close_result = GitHubIssueCloseResult(
+        issue_number=51,
+        closed=False,
+        ready=True,
+        enabled=True,
+        dry_run=True,
+        future_disabled=False,
+        would_close=True,
+        commit_hash="abc123def456",
+        suggested_command='gh issue close 51 --comment "<reviewed close comment>"',
         message=(
-            "Pull request workflow skipped. RALPH did not complete with "
-            "tests passed and committed changes. No pull request was created."
+            "Issue close workflow is dry-run. RALPH would close the issue after "
+            "human review, but no GitHub issue was closed."
         ),
     )
 
-    i_display_pull_request_draft(display, pull_request_draft_result)
+    i_display_issue_close_result(display, close_result)
 
     assert display.messages == [
-        "Pull request workflow: skipped.",
-        (
-            "Reason: Pull request workflow skipped. RALPH did not complete with "
-            "tests passed and committed changes. No pull request was created."
-        ),
+        "Issue close workflow: dry-run.",
+        "No GitHub issue was closed.",
+        "Would close issue #51 after human review.",
+        'Suggested issue close command: gh issue close 51 --comment "<reviewed close comment>"',
     ]

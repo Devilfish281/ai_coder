@@ -55,6 +55,18 @@ class GitHubIssueCloseResult:
     issue_number: int
     closed: bool
     message: str
+    ready: bool = False
+    enabled: bool = False
+    dry_run: bool = True
+    future_disabled: bool = True
+    would_close: bool = False
+    commit_hash: str = ""
+    suggested_command: str = ""
+    close_comment: str = ""
+    blocked_reason: str = ""
+    issue_title: str = ""
+    final_status: str = ""
+    verification_command: str = "poetry run pytest"
 
 
 @dataclass(frozen=True)
@@ -325,29 +337,165 @@ def i_github_issue_close(
     issue: GitHubIssue,
     tests_passed: bool,
     committed: bool,
+    *,
+    completed: bool = False,
+    final_status: str = "",
+    commit_hash: str = "",
+    enabled: bool = False,
+    dry_run: bool = True,
+    verification_command: str = "poetry run pytest",
 ) -> GitHubIssueCloseResult:
-    logger.info("Starting GitHub issue closing process.")
+    logger.info("Starting GitHub issue closing placeholder.")
     logger.info(f"Issue number: {issue.number}")
+    logger.info(f"Completion confirmed: {completed}")
+    logger.info(f"Final status: {final_status}")
     logger.info(f"Tests passed: {tests_passed}")
     logger.info(f"Committed work confirmed: {committed}")
-    if tests_passed and committed:
-        logger.info(
-            "Tests have passed and committed work is confirmed. Closing the issue."
-        )
+    logger.info(f"Commit hash present: {bool(commit_hash.strip())}")
+
+    blocked_reason = _issue_close_blocked_reason(
+        completed=completed,
+        final_status=final_status,
+        tests_passed=tests_passed,
+        committed=committed,
+        commit_hash=commit_hash,
+    )
+
+    if blocked_reason:
+        logger.info(blocked_reason)
         return GitHubIssueCloseResult(
             issue_number=issue.number,
+            issue_title=issue.title,
             closed=False,
-            message="GitHub issue closing is stubbed in this tracer-bullet slice.",
+            ready=False,
+            enabled=enabled,
+            dry_run=dry_run,
+            future_disabled=True,
+            would_close=False,
+            commit_hash=commit_hash,
+            final_status=final_status,
+            verification_command=verification_command,
+            blocked_reason=blocked_reason,
+            message=blocked_reason,
         )
 
-    logger.info(
-        "Tests have not passed or committed work is not confirmed. Issue will not be closed."
+    close_comment = _build_issue_close_comment(
+        issue=issue,
+        commit_hash=commit_hash,
+        verification_command=verification_command,
     )
+    suggested_command = _build_issue_close_command(issue.number)
+
+    if enabled and dry_run:
+        message = (
+            "Issue close workflow is dry-run. RALPH would close the issue after "
+            "human review, but no GitHub issue was closed."
+        )
+        logger.info(message)
+        return GitHubIssueCloseResult(
+            issue_number=issue.number,
+            issue_title=issue.title,
+            closed=False,
+            ready=True,
+            enabled=True,
+            dry_run=True,
+            future_disabled=False,
+            would_close=True,
+            commit_hash=commit_hash,
+            suggested_command=suggested_command,
+            close_comment=close_comment,
+            final_status=final_status,
+            verification_command=verification_command,
+            message=message,
+        )
+
+    if enabled and not dry_run:
+        message = (
+            "Issue close workflow is enabled, but real GitHub issue closing is "
+            "not implemented in this placeholder slice. No GitHub issue was closed."
+        )
+        logger.info(message)
+        return GitHubIssueCloseResult(
+            issue_number=issue.number,
+            issue_title=issue.title,
+            closed=False,
+            ready=True,
+            enabled=True,
+            dry_run=False,
+            future_disabled=True,
+            would_close=False,
+            commit_hash=commit_hash,
+            suggested_command=suggested_command,
+            close_comment=close_comment,
+            final_status=final_status,
+            verification_command=verification_command,
+            message=message,
+        )
+
+    message = (
+        "Issue close workflow is future/disabled. Close metadata is ready, "
+        "but no GitHub issue was closed."
+    )
+    logger.info(message)
     return GitHubIssueCloseResult(
         issue_number=issue.number,
+        issue_title=issue.title,
         closed=False,
-        message="Issue was not closed because tests have not passed and committed work is not confirmed.",
+        ready=True,
+        enabled=False,
+        dry_run=dry_run,
+        future_disabled=True,
+        would_close=False,
+        commit_hash=commit_hash,
+        suggested_command=suggested_command,
+        close_comment=close_comment,
+        final_status=final_status,
+        verification_command=verification_command,
+        message=message,
     )
+
+
+def _issue_close_blocked_reason(
+    *,
+    completed: bool,
+    final_status: str,
+    tests_passed: bool,
+    committed: bool,
+    commit_hash: str,
+) -> str:
+    if not completed:
+        return "Issue close workflow skipped because completion was not confirmed."
+
+    if final_status.strip().lower() != "complete":
+        return "Issue close workflow skipped because final status is not complete."
+
+    if not tests_passed:
+        return "Issue close workflow skipped because tests did not pass."
+
+    if not committed:
+        return "Issue close workflow skipped because committed work is not confirmed."
+
+    if not commit_hash.strip():
+        return "Issue close workflow skipped because commit hash is missing."
+
+    return ""
+
+
+def _build_issue_close_comment(
+    *,
+    issue: GitHubIssue,
+    commit_hash: str,
+    verification_command: str,
+) -> str:
+    return (
+        f"Completed by RALPH. Summary: {issue.title}. "
+        f"Verification: {verification_command} passed. "
+        f"Commit: {commit_hash}."
+    )
+
+
+def _build_issue_close_command(issue_number: int) -> str:
+    return f'gh issue close {issue_number} --comment "<reviewed close comment>"'
 
 
 def _extract_issue_title(raw_text: str) -> str:

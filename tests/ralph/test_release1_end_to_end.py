@@ -174,7 +174,12 @@ def test_release1_end_to_end_success_commits_after_tests_pass(
 
         return original_agent_builder(agent_provider, sandbox_handle)
 
-    def fake_github_issue_close(issue, tests_passed, committed):
+    def fake_github_issue_close(
+        issue,
+        tests_passed,
+        committed,
+        **kwargs,
+    ):
         close_calls.append(
             {
                 "issue": issue,
@@ -185,6 +190,8 @@ def test_release1_end_to_end_success_commits_after_tests_pass(
         return GitHubIssueCloseResult(
             issue_number=issue.number,
             closed=False,
+            ready=False,
+            blocked_reason="GitHub issue closing is stubbed in this tracer-bullet slice.",
             message="GitHub issue closing is stubbed in this tracer-bullet slice.",
         )
 
@@ -299,7 +306,12 @@ def test_release1_end_to_end_failure_preserves_worktree(
 
         return original_agent_builder(agent_provider, sandbox_handle)
 
-    def fake_github_issue_close(issue, tests_passed, committed):
+    def fake_github_issue_close(
+        issue,
+        tests_passed,
+        committed,
+        **kwargs,
+    ):
         close_calls.append(
             {
                 "issue": issue,

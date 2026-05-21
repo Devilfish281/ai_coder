@@ -106,58 +106,146 @@ def test_safe_pr_close_policy_requires_human_approval_by_default() -> None:
     assert policy.closing_keyword_requires_human_approval is True
 
 
-def test_github_issue_close_stub_does_not_close_issue() -> None:
+def test_github_issue_close_placeholder_is_disabled_by_default_after_success() -> None:
     issue = GitHubIssue(
-        number=49,
-        title="Confirm safe PR and close policy",
-        labels=("HITL", "Sandcastle"),
+        number=51,
+        title="Add safe issue close workflow placeholder",
+        labels=("Sandcastle",),
     )
 
     result = i_github_issue_close(
         issue=issue,
+        completed=True,
+        final_status="complete",
         tests_passed=True,
         committed=True,
+        commit_hash="abc123def456",
+        enabled=False,
+        dry_run=True,
     )
 
-    assert result.issue_number == 49
+    assert result.issue_number == 51
+    assert result.issue_title == "Add safe issue close workflow placeholder"
+    assert result.ready is True
     assert result.closed is False
-    assert "stubbed" in result.message.lower()
+    assert result.enabled is False
+    assert result.future_disabled is True
+    assert result.would_close is False
+    assert result.commit_hash == "abc123def456"
+    assert "future/disabled" in result.message.lower()
+    assert "gh issue close 51" in result.suggested_command
+    assert "abc123def456" in result.close_comment
 
 
-def test_github_issue_close_does_not_close_when_tests_fail() -> None:
+def test_github_issue_close_placeholder_requires_completion() -> None:
     issue = GitHubIssue(
-        number=49,
-        title="Confirm safe PR and close policy",
-        labels=("HITL", "Sandcastle"),
+        number=51,
+        title="Add safe issue close workflow placeholder",
+        labels=("Sandcastle",),
     )
 
     result = i_github_issue_close(
         issue=issue,
+        completed=False,
+        final_status="complete",
+        tests_passed=True,
+        committed=True,
+        commit_hash="abc123def456",
+    )
+
+    assert result.ready is False
+    assert result.closed is False
+    assert "completion" in result.blocked_reason.lower()
+
+
+def test_github_issue_close_placeholder_requires_tests_passed() -> None:
+    issue = GitHubIssue(
+        number=51,
+        title="Add safe issue close workflow placeholder",
+        labels=("Sandcastle",),
+    )
+
+    result = i_github_issue_close(
+        issue=issue,
+        completed=True,
+        final_status="complete",
         tests_passed=False,
         committed=True,
+        commit_hash="abc123def456",
     )
 
-    assert result.issue_number == 49
+    assert result.ready is False
     assert result.closed is False
-    assert "tests have not passed" in result.message.lower()
+    assert "tests" in result.blocked_reason.lower()
 
 
-def test_github_issue_close_does_not_close_when_commit_missing() -> None:
+def test_github_issue_close_placeholder_requires_commit_success() -> None:
     issue = GitHubIssue(
-        number=49,
-        title="Confirm safe PR and close policy",
-        labels=("HITL", "Sandcastle"),
+        number=51,
+        title="Add safe issue close workflow placeholder",
+        labels=("Sandcastle",),
     )
 
     result = i_github_issue_close(
         issue=issue,
+        completed=True,
+        final_status="complete",
         tests_passed=True,
         committed=False,
+        commit_hash="abc123def456",
     )
 
-    assert result.issue_number == 49
+    assert result.ready is False
     assert result.closed is False
-    assert "committed work is not confirmed" in result.message.lower()
+    assert "committed work" in result.blocked_reason.lower()
+
+
+def test_github_issue_close_placeholder_requires_commit_hash() -> None:
+    issue = GitHubIssue(
+        number=51,
+        title="Add safe issue close workflow placeholder",
+        labels=("Sandcastle",),
+    )
+
+    result = i_github_issue_close(
+        issue=issue,
+        completed=True,
+        final_status="complete",
+        tests_passed=True,
+        committed=True,
+        commit_hash="",
+    )
+
+    assert result.ready is False
+    assert result.closed is False
+    assert "commit hash" in result.blocked_reason.lower()
+
+
+def test_github_issue_close_enabled_dry_run_does_not_close() -> None:
+    issue = GitHubIssue(
+        number=51,
+        title="Add safe issue close workflow placeholder",
+        labels=("Sandcastle",),
+    )
+
+    result = i_github_issue_close(
+        issue=issue,
+        completed=True,
+        final_status="complete",
+        tests_passed=True,
+        committed=True,
+        commit_hash="abc123def456",
+        enabled=True,
+        dry_run=True,
+    )
+
+    assert result.ready is True
+    assert result.enabled is True
+    assert result.dry_run is True
+    assert result.would_close is True
+    assert result.closed is False
+    assert "dry-run" in result.message.lower()
+    assert "gh issue close 51" in result.suggested_command
 
 
 def test_github_issue_from_provided_data_builds_issue() -> None:
@@ -849,14 +937,15 @@ def test_github_issue_from_file_loads_create_issue_template(tmp_path) -> None:
     assert "### LABELS" not in issue.body
 
 
-def test_github_issue_close_stub_does_not_close_issue() -> None:
+def test_github_issue_close_default_call_requires_completion() -> None:
     issue = GitHubIssue(number=9, title="Fix local RALPH loop")
 
     result = i_github_issue_close(issue, tests_passed=True, committed=True)
 
     assert result.issue_number == 9
     assert result.closed is False
-    assert "stubbed" in result.message
+    assert result.ready is False
+    assert "completion was not confirmed" in result.message.lower()
 
 
 # 019 Tests for security and special character handling

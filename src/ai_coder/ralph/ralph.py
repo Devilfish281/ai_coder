@@ -63,6 +63,7 @@ from ai_coder.display import (
     i_display_pull_request_draft,
     i_display_selected_issue,
     i_display_test_result,
+    i_display_issue_close_result,
 )
 
 
@@ -88,6 +89,7 @@ from ai_coder.github_issues import (
     i_github_issue_from_file,
     i_github_issue_list,
     i_github_issue_select_actionable,
+    GitHubIssueCloseResult,
 )
 
 
@@ -205,6 +207,7 @@ class RalphResult:
     message: str
     status: str = RALPH_STATUS_INCOMPLETE
     pull_request_draft_result: PullRequestDraftResult | None = None
+    issue_close_result: GitHubIssueCloseResult | None = None
 
 
 def i_ralph_run(
@@ -672,53 +675,57 @@ def i_ralph_run(
         "Step 11: Close the GitHub issue only after tests pass and the fix is committed."
     )
 
-    logger.info("Step 11a: Prepare future pull request draft metadata.")  #  Added Code
-    active_display.i_display_message(  #  Added Code
-        "Step 11a: Prepare future pull request draft metadata."  #  Added Code
-    )  #  Added Code
-    i_display_phase(active_display, "pull_request")  #  Added Code
-
-    pull_request_final_status = (  #  Added Code
-        RALPH_STATUS_COMPLETE  #  Added Code
-        if orchestrator_result.completed  #  Added Code
-        and test_result.passed  #  Added Code
-        and getattr(sync_result, "committed", False)  #  Added Code
-        and not getattr(sync_result, "failed", False)  #  Added Code
-        else RALPH_STATUS_FAILED  #  Added Code
-    )  #  Added Code
-
-    pull_request_draft_result = i_pull_request_draft_build(  #  Added Code
-        issue_number=selected_issue.number,  #  Added Code
-        issue_title=selected_issue.title,  #  Added Code
-        head_branch=worktree_result.branch_name,  #  Added Code
-        commit_hash=sync_result.commit_hash,  #  Added Code
-        base_branch="main",  #  Added Code
-        tests_passed=test_result.passed,  #  Added Code
-        committed=getattr(sync_result, "committed", False),  #  Added Code
-        final_status=pull_request_final_status,  #  Added Code
-        verification_command=_format_command_for_display(test_command),  #  Added Code
-    )  #  Added Code
-    i_display_pull_request_draft(
-        active_display, pull_request_draft_result
-    )  #  Added Code
-
-    logger.info(
-        "Step 11b: Close the GitHub issue only after tests pass and the fix is committed."
-    )
+    logger.info("Step 11a: Prepare future pull request draft metadata.")
     active_display.i_display_message(
-        "Step 11b: Close the GitHub issue only after tests pass and the fix is committed."
+        "Step 11a: Prepare future pull request draft metadata."
     )
+    i_display_phase(active_display, "pull_request")
+
+    pull_request_final_status = (
+        RALPH_STATUS_COMPLETE
+        if orchestrator_result.completed
+        and test_result.passed
+        and getattr(sync_result, "committed", False)
+        and not getattr(sync_result, "failed", False)
+        else RALPH_STATUS_FAILED
+    )
+
+    pull_request_draft_result = i_pull_request_draft_build(
+        issue_number=selected_issue.number,
+        issue_title=selected_issue.title,
+        head_branch=worktree_result.branch_name,
+        commit_hash=sync_result.commit_hash,
+        base_branch="main",
+        tests_passed=test_result.passed,
+        committed=getattr(sync_result, "committed", False),
+        final_status=pull_request_final_status,
+        verification_command=_format_command_for_display(test_command),
+    )
+    i_display_pull_request_draft(active_display, pull_request_draft_result)
+
+    logger.info("Step 11b: Prepare future issue close placeholder metadata.")
+    active_display.i_display_message(
+        "Step 11b: Prepare future issue close placeholder metadata."
+    )
+    i_display_phase(active_display, "issue_close")
 
     close_result = i_github_issue_close(
         issue=selected_issue,
         tests_passed=test_result.passed,
-        committed=sync_result.merged,
+        committed=getattr(sync_result, "committed", False),
+        completed=orchestrator_result.completed,
+        final_status=pull_request_final_status,
+        commit_hash=getattr(sync_result, "commit_hash", ""),
+        enabled=setup_config.github_issue_close_enabled,
+        dry_run=setup_config.dry_run,
+        verification_command=_format_command_for_display(test_command),
     )
 
     logger.info(
         f"Close issue result: Issue #{close_result.issue_number} closed: {close_result.closed}"
     )
     logger.info(close_result.message)
+    i_display_issue_close_result(active_display, close_result)
 
     #############################################
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
@@ -802,6 +809,7 @@ def i_ralph_run(
         message=message_result,
         status=result_status,
         pull_request_draft_result=pull_request_draft_result,
+        issue_close_result=close_result,
     )
 
 

@@ -649,7 +649,12 @@ def _stub_github_issue_close(
     monkeypatch,
     close_calls: list[dict[str, object]],
 ) -> None:
-    def fake_github_issue_close(issue, tests_passed, committed):
+    def fake_github_issue_close(
+        issue,
+        tests_passed,
+        committed,
+        **kwargs,
+    ):
         close_calls.append(
             {
                 "issue": issue,
@@ -660,6 +665,8 @@ def _stub_github_issue_close(
         return GitHubIssueCloseResult(
             issue_number=issue.number,
             closed=False,
+            ready=False,
+            blocked_reason="GitHub issue closing is stubbed in the Docker integration test.",
             message="GitHub issue closing is stubbed in the Docker integration test.",
         )
 

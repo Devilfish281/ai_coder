@@ -11,6 +11,7 @@ from ai_coder.setup_config import (
     DEFAULT_GITHUB_ACTIONABLE_LABEL_ALLOWLIST,
     DEFAULT_GITHUB_ALLOWED_ASSIGNEE_LOGINS,
     DEFAULT_GITHUB_BLOCKED_LABEL_LIST,
+    DEFAULT_GITHUB_ISSUE_CLOSE_ENABLED,
     DEFAULT_GITHUB_REPO,
     DEFAULT_GITHUB_SKIP_ASSIGNED_ISSUES,
     DEFAULT_GITHUB_UNSAFE_LABEL_LIST,
@@ -51,6 +52,7 @@ _RUNTIME_ENV_NAMES = (
     "RALPH_GITHUB_UNSAFE_LABEL_LIST",
     "RALPH_GITHUB_SKIP_ASSIGNED_ISSUES",
     "RALPH_GITHUB_ALLOWED_ASSIGNEE_LOGINS",
+    "RALPH_GITHUB_ISSUE_CLOSE_ENABLED",
 )
 
 
@@ -289,6 +291,45 @@ def test_setup_config_loads_safe_defaults_when_env_values_are_missing(
     assert config.max_iterations == 3
     assert config.prompt_path == prompt_file
     assert config.sandbox_mode == "local"
+
+
+def test_setup_config_github_issue_close_enabled_defaults_to_false(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    config = _fresh_config()
+
+    assert DEFAULT_GITHUB_ISSUE_CLOSE_ENABLED is False
+    assert config.github_issue_close_enabled is False
+
+
+def test_setup_config_loads_github_issue_close_enabled_from_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_GITHUB_ISSUE_CLOSE_ENABLED", "true")
+
+    config = _fresh_config()
+
+    assert config.github_issue_close_enabled is True
+
+
+def test_setup_config_to_dict_includes_github_issue_close_enabled(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_GITHUB_ISSUE_CLOSE_ENABLED", "true")
+
+    config = _fresh_config()
+
+    assert config.to_dict()["github_issue_close_enabled"] is True
 
 
 def test_setup_config_default_docker_image_name_is_release_2_default(

@@ -205,6 +205,49 @@ def i_display_pull_request_draft(
         display.i_display_message(f"Suggested PR command: {suggested_command}")
 
 
+def i_display_issue_close_result(
+    display: DisplayProtocol,
+    issue_close_result: object,
+) -> None:
+    ready = bool(getattr(issue_close_result, "ready", False))
+    dry_run = bool(getattr(issue_close_result, "dry_run", True))
+    would_close = bool(getattr(issue_close_result, "would_close", False))
+    issue_number = getattr(issue_close_result, "issue_number", "")
+    suggested_command = str(
+        getattr(issue_close_result, "suggested_command", "")
+    ).strip()
+    blocked_reason = str(getattr(issue_close_result, "blocked_reason", "")).strip()
+    message = str(getattr(issue_close_result, "message", "")).strip()
+
+    if not ready:
+        display.i_display_message("Issue close workflow: skipped.")
+        display.i_display_message(
+            f"Reason: {_format_output_text(blocked_reason or message)}"
+        )
+        display.i_display_message("No GitHub issue was closed.")
+        return
+
+    if dry_run and would_close:
+        display.i_display_message("Issue close workflow: dry-run.")
+        display.i_display_message("No GitHub issue was closed.")
+        display.i_display_message(
+            f"Would close issue #{issue_number} after human review."
+        )
+
+        if suggested_command:
+            display.i_display_message(
+                f"Suggested issue close command: {suggested_command}"
+            )
+
+        return
+
+    display.i_display_message("Issue close workflow: future/disabled.")
+    display.i_display_message("No GitHub issue was closed.")
+
+    if suggested_command:
+        display.i_display_message(f"Suggested issue close command: {suggested_command}")
+
+
 def _format_agent_event_message(event: AgentProviderEvent) -> str:
     if event.normalized_type == NORMALIZED_EVENT_TYPE_SESSION:
         return _format_agent_session_event(event)
