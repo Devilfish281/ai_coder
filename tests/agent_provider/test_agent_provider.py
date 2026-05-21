@@ -1022,6 +1022,221 @@ def test_agent_provider_create_rejects_empty_codex_command(tmp_path) -> None:
         )
 
 
+def _issue_044_windows_special_character_prompt() -> str:
+    issue_body_lines = [
+        "# Issue 044 — Add CodexProvider Windows special-character tests",
+        "",
+        "## Labels",
+        "tracer bullet, codex, windows, security",
+        "",
+        "## Windows paths",
+        r"Trusted-looking project path: C:\Users\ME\Documents\Python\2026\Projects\ai_coder",
+        r"Untrusted issue path marker: C:\Users\ME\Documents\Python\2026\Projects\ISSUE_044_UNTRUSTED_PATH_MARKER",
+        r"Untrusted issue path with spaces: C:\Users\ME\Documents\Python\2026\Projects\ai coder with spaces\ISSUE_044_PATH_WITH_SPACES_MARKER",
+        "",
+        'Issue title marker: "UNIQUE_ISSUE_044_QUOTED_TITLE_MARKER"',
+        "Single quoted marker: 'UNIQUE_ISSUE_044_SINGLE_QUOTED_LABEL_MARKER'",
+        'Double quoted marker: "UNIQUE_ISSUE_044_DOUBLE_QUOTED_PHRASE_MARKER"',
+        "PowerShell marker: $(Write-Output unsafe)",
+        "Remove marker: ; Remove-Item -Recurse",
+        "Command chaining marker: && whoami",
+        "Environment marker: %PATH%",
+        "Operator marker: ^ | & < >",
+        "Backtick marker: `echo unsafe`",
+        "Unicode marker: RALPH 🚀 café naïve résumé 中文",
+        "",
+    ]
+
+    repeated_body = "\n".join(
+        f"Issue 044 long body line {line_number}: keep Windows issue text out of command args."
+        for line_number in range(1, 301)
+    )
+
+    return "\n".join(issue_body_lines) + "\n" + repeated_body
+
+
+def test_codex_provider_keeps_windows_paths_in_stdin_not_command_args(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex completed\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider_worktree_path = r"C:\Users\ME\Documents\Python\2026\Projects\ai_coder"
+    issue_path_marker = (
+        r"C:\Users\ME\Documents\Python\2026\Projects\ISSUE_044_UNTRUSTED_PATH_MARKER"
+    )
+    issue_path_with_spaces_marker = r"C:\Users\ME\Documents\Python\2026\Projects\ai coder with spaces\ISSUE_044_PATH_WITH_SPACES_MARKER"
+    final_output_path = tmp_path / "codex-last-message.md"
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=provider_worktree_path,
+        final_output_path=final_output_path,
+    )
+
+    prompt = _issue_044_windows_special_character_prompt()
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+
+    assert result.error is None
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert provider.prompts == [prompt]
+    assert provider.run_count == 1
+    assert str(provider_worktree_path) in command
+    assert issue_path_marker in prompt
+    assert issue_path_with_spaces_marker in prompt
+    assert issue_path_marker not in command
+    assert issue_path_marker not in command_text
+    assert issue_path_with_spaces_marker not in command
+    assert issue_path_with_spaces_marker not in command_text
+    assert prompt not in command
+    assert prompt not in command_text
+    assert command[-1] == "-"
+
+
+def test_codex_provider_keeps_quotes_and_shell_like_text_inert(tmp_path) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex completed\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+    dangerous_markers = (
+        "$(Write-Output unsafe)",
+        "&& whoami",
+        "; Remove-Item -Recurse",
+        "`echo unsafe`",
+        "%PATH%",
+        "^ | & < >",
+        '"quoted title"',
+        "'single quoted label'",
+    )
+    prompt = "\n".join(
+        (
+            "# Issue 044 shell-like inert text test",
+            "Title: " + dangerous_markers[6],
+            "Label: " + dangerous_markers[7],
+            "Body markers:",
+            *dangerous_markers,
+        )
+    )
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+    stdin_text = sandbox_handle.calls[0]["stdin_text"]
+
+    assert result.error is None
+    assert stdin_text == prompt
+    for marker in dangerous_markers:
+        assert marker in stdin_text
+        assert marker not in command
+        assert marker not in command_text
+    assert prompt not in command
+    assert prompt not in command_text
+    assert command[-1] == "-"
+
+
+def test_codex_provider_keeps_long_issue_title_body_and_labels_out_of_command_args(
+    tmp_path,
+) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex completed\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+    title_marker = "UNIQUE_ISSUE_044_TITLE_MARKER"
+    body_marker = "UNIQUE_ISSUE_044_BODY_MARKER"
+    label_marker = "UNIQUE_ISSUE_044_LABEL_MARKER"
+    long_body = "\n".join(
+        f"Issue 044 long body line {line_number}: {body_marker} stays inert."
+        for line_number in range(1, 301)
+    )
+    prompt = (
+        "# GitHub Issue\n\n"
+        f'Title: {title_marker} "quoted issue title"\n'
+        f"Labels: tracer bullet, codex, windows, security, {label_marker}\n\n"
+        f"{body_marker}\n"
+        f"{long_body}"
+    )
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+    stdin_text = sandbox_handle.calls[0]["stdin_text"]
+
+    assert result.error is None
+    assert stdin_text == prompt
+    assert title_marker in stdin_text
+    assert body_marker in stdin_text
+    assert label_marker in stdin_text
+    assert title_marker not in command_text
+    assert body_marker not in command_text
+    assert label_marker not in command_text
+    assert "Issue 044 long body line 275" in stdin_text
+    assert "Issue 044 long body line 275" not in command_text
+    assert prompt not in command
+    assert prompt not in command_text
+    assert command[-1] == "-"
+
+
+def test_agent_provider_create_codex_keeps_windows_special_character_prompt_in_stdin(
+    tmp_path,
+) -> None:
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex completed\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = i_agent_provider_create(
+        provider_name="codex",
+        sandbox_handle=sandbox_handle,
+        worktree_path=tmp_path,
+        codex_command="codex",
+        final_output_path=tmp_path / "codex-last-message.md",
+    )
+    prompt = _issue_044_windows_special_character_prompt()
+    dangerous_marker = "$(Write-Output unsafe)"
+
+    result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+
+    assert result.error is None
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert dangerous_marker in prompt
+    assert prompt not in command
+    assert prompt not in command_text
+    assert dangerous_marker not in command
+    assert dangerous_marker not in command_text
+    assert command[-1] == "-"
+
+
 def _issue_040_large_codex_prompt() -> str:
     issue_body_lines = [
         "# Issue 040 — Add CodexProvider prompt passing for long prompts",
