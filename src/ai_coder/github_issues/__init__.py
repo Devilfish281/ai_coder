@@ -5,6 +5,7 @@ from __future__ import annotations
 from ai_coder.github_issues.github_issues import (
     GitHubIssue,
     GitHubIssueCloseResult,
+    GitHubIssueReadError,
     GitHubIssueSelectionResult,
     GitHubIssueSkipReason,
     ProvidedIssueData,
@@ -19,6 +20,7 @@ from ai_coder.github_issues.github_issues import (
 __all__ = [
     "GitHubIssue",
     "GitHubIssueCloseResult",
+    "GitHubIssueReadError",
     "GitHubIssueSelectionResult",
     "GitHubIssueSkipReason",
     "ProvidedIssueData",

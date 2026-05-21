@@ -56,6 +56,10 @@ class GitHubIssueCloseResult:
     message: str
 
 
+class GitHubIssueReadError(RuntimeError):
+    """Raised when RALPH cannot read open GitHub issues through GitHub CLI."""
+
+
 def i_github_issue_from_file(
     issue_path: str | Path,
     default_label: str = "tracer bullet",
@@ -96,53 +100,125 @@ def i_github_issue_from_provided(
 
 
 def i_github_issue_list(label: str | None = None) -> tuple[GitHubIssue, ...]:
+    reader = GhCliGitHubIssueReader(
+        github_repo=setup_config.github_repo,
+        command_runner=subprocess.run,
+    )
+    return reader.read_open_issues(label=label)
+
+
+class GhCliGitHubIssueReader:
+    def __init__(self, github_repo: str, command_runner) -> None:
+        self.github_repo = github_repo
+        self.command_runner = command_runner
+
+    def read_open_issues(
+        self,
+        label: str | None = None,
+    ) -> tuple[GitHubIssue, ...]:
+        command = _build_gh_issue_list_command(
+            github_repo=self.github_repo,
+            label=label,
+        )
+
+        logger.info(f"Listing GitHub issues with label: {label}")
+        logger.info("Running command to list GitHub issues...")
+        logger.debug(f"Command: {' '.join(command)}")
+
+        completed_process = self._run_command(command)
+
+        stdout_text = completed_process.stdout or ""
+        stderr_text = completed_process.stderr or ""
+
+        logger.debug(f"GitHub issue list return code: {completed_process.returncode}")
+        logger.debug(f"GitHub issue list stderr: {stderr_text.strip()}")
+
+        if completed_process.returncode != 0:
+            detail = stderr_text.strip() or (
+                f"gh issue list exited with code {completed_process.returncode}."
+            )
+            raise _github_issue_read_error(detail)
+
+        logger.info("Parsing GitHub issues from command output...")
+        logger.debug(f"Raw command output: {stdout_text.strip()}")
+
+        raw_issues = _parse_gh_issue_list_json(stdout_text)
+
+        logger.info(f"Parsed {len(raw_issues)} GitHub issues.")
+        return tuple(_github_issue_from_gh_json(raw_issue) for raw_issue in raw_issues)
+
+    def _run_command(self, command: list[str]):
+        try:
+            return self.command_runner(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except FileNotFoundError as error:
+            raise _github_issue_read_error(str(error)) from error
+        except OSError as error:
+            raise _github_issue_read_error(str(error)) from error
+
+
+def _build_gh_issue_list_command(
+    github_repo: str,
+    label: str | None = None,
+) -> list[str]:
     command = [
         "gh",
         "issue",
         "list",
         "--repo",
-        setup_config.github_repo,
+        github_repo,
         "--state",
         "open",
         "--json",
         "number,title,body,labels,assignees",
     ]
 
-    logger.info(f"Listing GitHub issues with label: {label}")
     if label and label.strip():
         command.extend(["--label", label.strip()])
         logger.info(f"Added label filter to command: {label.strip()}")
 
-    logger.info("Running command to list GitHub issues...")
-    logger.debug(f"Command: {' '.join(command)}")
+    return command
 
-    completed_process = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
 
-    stdout_text = completed_process.stdout or ""
-    stderr_text = completed_process.stderr or ""
+def _parse_gh_issue_list_json(stdout_text: str) -> list[dict]:
+    try:
+        raw_issues = json.loads(stdout_text or "[]")
+    except json.JSONDecodeError as error:
+        raise _github_issue_read_error(
+            f"Malformed JSON from gh issue list: {error}"
+        ) from error
 
-    logger.debug(f"GitHub issue list return code: {completed_process.returncode}")
-    logger.debug(f"GitHub issue list stderr: {stderr_text.strip()}")
-
-    if completed_process.returncode != 0:
-        raise RuntimeError(
-            "Failed to list GitHub issues with gh issue list: " f"{stderr_text.strip()}"
+    if not isinstance(raw_issues, list):
+        raise _github_issue_read_error(
+            "Malformed JSON from gh issue list: expected a JSON list."
         )
 
-    logger.info("Parsing GitHub issues from command output...")
-    logger.debug(f"Raw command output: {stdout_text.strip()}")
-    logger.info("Successfully listed GitHub issues. Parsing JSON output...")
-    raw_issues = json.loads(stdout_text or "[]")
+    parsed_issues: list[dict] = []
 
-    logger.info(f"Parsed {len(raw_issues)} GitHub issues.")
-    return tuple(_github_issue_from_gh_json(raw_issue) for raw_issue in raw_issues)
+    for raw_issue in raw_issues:
+        if not isinstance(raw_issue, dict):
+            raise _github_issue_read_error(
+                "Malformed JSON from gh issue list: expected issue objects."
+            )
+
+        parsed_issues.append(raw_issue)
+
+    return parsed_issues
+
+
+def _github_issue_read_error(detail: str) -> GitHubIssueReadError:
+    cleaned_detail = detail.strip() or "No details were provided."
+    return GitHubIssueReadError(
+        "Blocked: unable to read open GitHub issues. "
+        "Confirm GitHub CLI access and GITHUB_REPO configuration. "
+        f"Details: {cleaned_detail}"
+    )
 
 
 def i_github_issue_select_actionable(
@@ -520,27 +596,61 @@ def _skip_reason(
 
 
 def _github_issue_from_gh_json(raw_issue: dict) -> GitHubIssue:
-    raw_labels = raw_issue.get("labels", [])
-    label_names = tuple(
-        str(label.get("name", ""))
-        for label in raw_labels
-        if str(label.get("name", "")).strip()
-    )
-
-    raw_assignees = raw_issue.get("assignees", [])
-    assignee_names = tuple(
-        _assignee_name_from_gh_json(assignee)
-        for assignee in raw_assignees
-        if _assignee_name_from_gh_json(assignee)
-    )
-
     return GitHubIssue(
         number=int(raw_issue["number"]),
         title=str(raw_issue.get("title", "")),
         body=str(raw_issue.get("body", "")),
-        labels=label_names,
-        assignees=assignee_names,
+        labels=_labels_from_gh_json(raw_issue.get("labels", [])),
+        assignees=_assignees_from_gh_json(raw_issue.get("assignees", [])),
     )
+
+
+def _labels_from_gh_json(raw_labels: object) -> tuple[str, ...]:
+    if not isinstance(raw_labels, list):
+        return ()
+
+    label_names: list[str] = []
+
+    for raw_label in raw_labels:
+        if isinstance(raw_label, dict):
+            label_name = str(raw_label.get("name", "")).strip()
+        else:
+            label_name = str(raw_label).strip()
+
+        if label_name:
+            label_names.append(label_name)
+
+    return tuple(label_names)
+
+
+def _assignees_from_gh_json(raw_assignees: object) -> tuple[str, ...]:
+    if not isinstance(raw_assignees, list):
+        return ()
+
+    assignee_names: list[str] = []
+
+    for raw_assignee in raw_assignees:
+        assignee_name = _assignee_name_from_gh_json(raw_assignee)
+
+        if assignee_name:
+            assignee_names.append(assignee_name)
+
+    return tuple(assignee_names)
+
+
+def _assignee_name_from_gh_json(raw_assignee: object) -> str:
+    if not isinstance(raw_assignee, dict):
+        return str(raw_assignee).strip()
+
+    login = str(raw_assignee.get("login", "")).strip()
+    if login:
+        return login
+
+    name = str(raw_assignee.get("name", "")).strip()
+    if name:
+        return name
+
+    return ""
 
 
 def _assignee_name_from_gh_json(raw_assignee: object) -> str:
