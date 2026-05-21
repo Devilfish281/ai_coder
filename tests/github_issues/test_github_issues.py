@@ -56,9 +56,108 @@ def _configure_github_issue_safeguards(
     github_issues_module.setup_config.github_allowed_assignee_logins = allowed_assignees
 
 
+def _get_safe_pr_close_policy():
+    return github_issues_module.i_github_issue_get_safe_pr_close_policy()
+
+
 ###############################################################################
 #  Functiona
 ###############################################################################
+def test_safe_pr_close_policy_states_when_pr_creation_is_allowed() -> None:
+    policy = _get_safe_pr_close_policy()
+    policy_text = " ".join(policy.pr_creation_allowed_when).casefold()
+
+    assert "single actionable" in policy_text
+    assert "completion signal" in policy_text
+    assert "tests passed" in policy_text
+    assert "committed" in policy_text
+    assert "human approval" in policy_text
+
+
+def test_safe_pr_close_policy_states_when_issue_closing_is_allowed() -> None:
+    policy = _get_safe_pr_close_policy()
+    policy_text = " ".join(policy.issue_closing_allowed_when).casefold()
+
+    assert "fully completed" in policy_text
+    assert "tests passed" in policy_text
+    assert "committed" in policy_text
+    assert "complete" in policy_text
+    assert "human approval" in policy_text
+
+
+def test_safe_pr_close_policy_requires_tests_before_close() -> None:
+    policy = _get_safe_pr_close_policy()
+
+    assert policy.tests_must_pass_before_close is True
+
+
+def test_safe_pr_close_policy_requires_commit_before_close() -> None:
+    policy = _get_safe_pr_close_policy()
+
+    assert policy.changes_must_be_committed_before_close is True
+
+
+def test_safe_pr_close_policy_requires_human_approval_by_default() -> None:
+    policy = _get_safe_pr_close_policy()
+
+    assert policy.human_approval_required is True
+    assert policy.automatic_pr_creation_default_enabled is False
+    assert policy.automatic_issue_closing_default_enabled is False
+    assert policy.closing_keyword_requires_human_approval is True
+
+
+def test_github_issue_close_stub_does_not_close_issue() -> None:
+    issue = GitHubIssue(
+        number=49,
+        title="Confirm safe PR and close policy",
+        labels=("HITL", "Sandcastle"),
+    )
+
+    result = i_github_issue_close(
+        issue=issue,
+        tests_passed=True,
+        committed=True,
+    )
+
+    assert result.issue_number == 49
+    assert result.closed is False
+    assert "stubbed" in result.message.lower()
+
+
+def test_github_issue_close_does_not_close_when_tests_fail() -> None:
+    issue = GitHubIssue(
+        number=49,
+        title="Confirm safe PR and close policy",
+        labels=("HITL", "Sandcastle"),
+    )
+
+    result = i_github_issue_close(
+        issue=issue,
+        tests_passed=False,
+        committed=True,
+    )
+
+    assert result.issue_number == 49
+    assert result.closed is False
+    assert "tests have not passed" in result.message.lower()
+
+
+def test_github_issue_close_does_not_close_when_commit_missing() -> None:
+    issue = GitHubIssue(
+        number=49,
+        title="Confirm safe PR and close policy",
+        labels=("HITL", "Sandcastle"),
+    )
+
+    result = i_github_issue_close(
+        issue=issue,
+        tests_passed=True,
+        committed=False,
+    )
+
+    assert result.issue_number == 49
+    assert result.closed is False
+    assert "committed work is not confirmed" in result.message.lower()
 
 
 def test_github_issue_from_provided_data_builds_issue() -> None:
