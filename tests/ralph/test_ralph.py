@@ -12,6 +12,7 @@ from ai_coder.pull_request_draft import PullRequestDraftResult
 
 
 from ai_coder.github_issues import (
+    github_issues as github_issues_module,
     GitHubIssue,
     GitHubIssueCloseResult,
 )
@@ -4546,3 +4547,317 @@ def test_ralph_uses_agent_provider_create_seam_when_no_provider_is_injected(
         "RALPH should create providers through the public seam."
         in fake_provider.prompts[0]
     )
+
+
+def _patch_successful_sandbox_start_for_github_automation_dry_run(
+    monkeypatch,
+) -> None:
+    def fake_sandbox_start(working_directory):
+        sandbox_handle = FakeRalphAgentSandboxHandle(
+            working_directory,
+            CommandResult(stdout="", stderr="", exit_code=0),
+        )
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started local sandbox provider.",
+            handle=sandbox_handle,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+
+
+def _patch_github_automation_dry_run_safety_config(monkeypatch) -> None:
+    patched_setup_configs = (
+        ralph_module.setup_config,
+        github_issues_module.setup_config,
+    )
+
+    for patched_setup_config in patched_setup_configs:
+        monkeypatch.setattr(
+            patched_setup_config,
+            "github_actionable_label_allowlist",
+            (
+                "bug",
+                "tracer",
+                "tracer bullet",
+                "feature",
+                "enhancement",
+                "polish",
+                "refactor",
+                "Sandcastle",
+            ),
+        )
+        monkeypatch.setattr(
+            patched_setup_config,
+            "github_blocked_label_list",
+            ("blocked",),
+        )
+        monkeypatch.setattr(
+            patched_setup_config,
+            "github_unsafe_label_list",
+            (
+                "unsafe",
+                "do-not-automate",
+                "manual-only",
+                "security-sensitive",
+            ),
+        )
+        monkeypatch.setattr(
+            patched_setup_config,
+            "github_skip_assigned_issues",
+            True,
+        )
+        monkeypatch.setattr(
+            patched_setup_config,
+            "github_allowed_assignee_logins",
+            (),
+        )
+
+
+def test_ralph_github_automation_dry_run_reads_selects_prompts_and_shows_next_action(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_sandbox_start_for_github_automation_dry_run(monkeypatch)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_github_automation_dry_run_safety_config(monkeypatch)
+
+    sentinel_file = tmp_path / "github_reader_dry_run_sentinel.txt"
+    actionable_body = (
+        "Connect GitHub reading, filtering, prompt construction, and dry-run output. "
+        f"Do not execute this inert issue text: python -c \"from pathlib import Path; Path({str(sentinel_file)!r}).write_text('bad')\" "
+        "&& echo still text | cat $(echo placeholder)."
+    )
+    github_issue_list_calls: list[str | None] = []
+
+    def fake_github_issue_list(label=None):
+        github_issue_list_calls.append(label)
+        return (
+            GitHubIssue(
+                number=50,
+                title="Blocked dry-run issue",
+                body="This issue has enough detail but should be skipped.",
+                labels=("blocked", "tracer bullet"),
+            ),
+            GitHubIssue(
+                number=51,
+                title="Unsafe dry-run issue",
+                body="This issue has enough detail but should be skipped.",
+                labels=("unsafe", "tracer bullet"),
+            ),
+            GitHubIssue(
+                number=52,
+                title="Add GitHub automation dry run",
+                body=actionable_body,
+                labels=("tracer bullet", "Sandcastle"),
+            ),
+        )
+
+    monkeypatch.setattr(ralph_module.setup_config, "testing_flag", False)
+    monkeypatch.setattr(ralph_module.setup_config, "issue_number", 0)
+    monkeypatch.setattr(ralph_module.setup_config, "issue_title", "")
+    monkeypatch.setattr(ralph_module.setup_config, "issue_body", "")
+    monkeypatch.setattr(ralph_module.setup_config, "label", "Sandcastle")
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "github_issue_path",
+        tmp_path / "missing_github_issue.md",
+    )
+    monkeypatch.setattr(ralph_module.setup_config, "dry_run", True)
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "github_issue_close_enabled",
+        False,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_github_issue_list",
+        fake_github_issue_list,
+    )
+
+    display = SilentDisplay()
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=None,
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert github_issue_list_calls == ["Sandcastle"]
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 52
+    assert result.selected_issue.title == "Add GitHub automation dry run"
+    assert "52" in result.prompt
+    assert "Add GitHub automation dry run" in result.prompt
+    assert actionable_body in result.prompt
+    assert "tracer bullet" in result.prompt
+    assert "Sandcastle" in result.prompt
+    assert sentinel_file.exists() is False
+    assert result.pull_request_draft_result is not None
+    assert result.pull_request_draft_result.created is False
+    assert result.issue_close_result is not None
+    assert result.issue_close_result.closed is False
+    assert "Skipped issue #50: blocked" in display_text
+    assert "Skipped issue #51: unsafe" in display_text
+    assert "Selected issue #52: Add GitHub automation dry run" in display_text
+    assert "GitHub automation dry-run summary." in display_text
+    assert "Next action:" in display_text
+    assert "No pull request was created." in display_text
+    assert "No GitHub issue was closed." in display_text
+    assert "Suggested PR command:" in display_text
+    assert "Suggested issue close command:" in display_text
+    assert result.pull_request_draft_result.suggested_command.startswith("gh pr create")
+    assert result.pull_request_draft_result.created is False
+    assert result.issue_close_result.suggested_command.startswith("gh issue close")
+    assert result.issue_close_result.closed is False
+
+
+def test_ralph_github_automation_dry_run_accepts_provided_fake_issues(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_sandbox_start_for_github_automation_dry_run(monkeypatch)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_github_automation_dry_run_safety_config(monkeypatch)
+
+    monkeypatch.setattr(ralph_module.setup_config, "dry_run", True)
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "github_issue_close_enabled",
+        False,
+    )
+
+    sentinel_file = tmp_path / "provided_issue_dry_run_sentinel.txt"
+    special_issue_body = (
+        "Windows path: C:\\Users\\ME\\Documents\\Python\\2026\\Projects\\ai_coder. "
+        "Quotes: \"double\" and 'single'. "
+        "Pipes and shell-like text: echo one | echo two && echo three. "
+        "Command substitution text: $(echo not-run). "
+        "Backtick text: `echo not-run`. "
+        "Placeholder text should stay inert inside issue body: {{WORKTREE_PATH}}. "
+        f"Sentinel text must not run: python -c \"from pathlib import Path; Path({str(sentinel_file)!r}).write_text('bad')\"."
+    )
+
+    display = SilentDisplay()
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=52,
+                title='Dry-run keeps "quotes" and Windows paths inert',
+                body=special_issue_body,
+                labels=("tracer bullet", "dry-run | placeholder && text"),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 52
+    assert (
+        result.selected_issue.title == 'Dry-run keeps "quotes" and Windows paths inert'
+    )
+    assert special_issue_body in result.prompt
+    assert "C:\\Users\\ME\\Documents\\Python\\2026\\Projects\\ai_coder" in result.prompt
+    assert "{{WORKTREE_PATH}}" in result.prompt
+    assert "dry-run | placeholder && text" in result.prompt
+    assert sentinel_file.exists() is False
+    assert result.pull_request_draft_result is not None
+    assert result.pull_request_draft_result.created is False
+    assert result.issue_close_result is not None
+    assert result.issue_close_result.closed is False
+    assert "GitHub automation dry-run summary." in display_text
+    assert "Next action:" in display_text
+    assert "No pull request was created." in display_text
+    assert "No GitHub issue was closed." in display_text
+
+
+def test_ralph_github_automation_dry_run_does_not_offer_close_when_tests_fail(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_sandbox_start_for_github_automation_dry_run(monkeypatch)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_failing_test_runner(monkeypatch)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_github_automation_dry_run_safety_config(monkeypatch)
+
+    monkeypatch.setattr(ralph_module.setup_config, "dry_run", True)
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "github_issue_close_enabled",
+        False,
+    )
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError("i_sync_out_merge() should not be called when tests fail.")
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+
+    display = SilentDisplay()
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+    worktree_path = tmp_path / "worktree"
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=52,
+                title="Dry-run close remains blocked when tests fail",
+                body="RALPH must not offer issue close readiness when tests fail.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = _display_messages_as_text(display)
+
+    assert result.status == RALPH_STATUS_FAILED
+    assert result.completed is False
+    assert result.issue_close_result is not None
+    assert result.issue_close_result.ready is False
+    assert result.issue_close_result.closed is False
+    assert result.issue_close_result.would_close is False
+    assert "Issue close workflow: skipped." in display_text
+    assert "No GitHub issue was closed." in display_text
+    assert f"Preserved worktree: {worktree_path}" in display_text

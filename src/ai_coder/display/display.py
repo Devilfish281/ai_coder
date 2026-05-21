@@ -248,6 +248,52 @@ def i_display_issue_close_result(
         display.i_display_message(f"Suggested issue close command: {suggested_command}")
 
 
+def i_display_github_automation_dry_run_summary(
+    display: DisplayProtocol,
+    *,
+    selected_issue_number: int | str,
+    selected_issue_title: str,
+    final_status: str,
+    pull_request_draft_result: object | None = None,
+    issue_close_result: object | None = None,
+    dry_run: bool = True,
+) -> None:
+    if dry_run:
+        display.i_display_message("GitHub automation dry-run summary.")
+    else:
+        display.i_display_message("GitHub automation placeholder summary.")
+
+    display.i_display_message(
+        f"Selected issue #{selected_issue_number}: {selected_issue_title}"
+    )
+    display.i_display_message(f"Final status: {_format_output_text(final_status)}")
+    display.i_display_message("No pull request was created.")
+    display.i_display_message("No GitHub issue was closed.")
+
+    if str(final_status).strip().lower() != "complete":
+        display.i_display_message(
+            "Next action: inspect the preserved worktree and fix the blocker "
+            "before opening a PR or closing the issue."
+        )
+        return
+
+    pull_request_ready = bool(getattr(pull_request_draft_result, "ready", False))
+    issue_close_ready = bool(getattr(issue_close_result, "ready", False))
+
+    if pull_request_ready:
+        display.i_display_message("Next action: review the suggested PR command.")
+
+    if issue_close_ready:
+        display.i_display_message(
+            "Next action: review the suggested issue close command."
+        )
+
+    if not pull_request_ready and not issue_close_ready:
+        display.i_display_message(
+            "Next action: inspect the run result before opening a PR or closing the issue."
+        )
+
+
 def _format_agent_event_message(event: AgentProviderEvent) -> str:
     if event.normalized_type == NORMALIZED_EVENT_TYPE_SESSION:
         return _format_agent_session_event(event)

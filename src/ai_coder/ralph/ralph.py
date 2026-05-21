@@ -58,6 +58,7 @@ from ai_coder.display import (
     i_display_cleanup_result,
     i_display_command_failure,
     i_display_commit_result,
+    i_display_github_automation_dry_run_summary,
     i_display_issue_skip_reasons,
     i_display_phase,
     i_display_pull_request_draft,
@@ -724,12 +725,28 @@ def i_ralph_run(
     logger.info(
         f"Close issue result: Issue #{close_result.issue_number} closed: {close_result.closed}"
     )
+
     logger.info(close_result.message)
     i_display_issue_close_result(active_display, close_result)
+
+    logger.info("Step 11c: Show GitHub automation dry-run summary.")
+    active_display.i_display_message(
+        "Step 11c: Show GitHub automation dry-run summary."
+    )
+    i_display_github_automation_dry_run_summary(
+        active_display,
+        selected_issue_number=selected_issue.number,
+        selected_issue_title=selected_issue.title,
+        final_status=pull_request_final_status,
+        pull_request_draft_result=pull_request_draft_result,
+        issue_close_result=close_result,
+        dry_run=setup_config.dry_run,
+    )
 
     #############################################
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
     logger.info("Step 12: Preserve or clean up the worktree based on final run state.")
+
     active_display.i_display_message(
         "Step 12: Preserve or clean up the worktree based on final run state."
     )
