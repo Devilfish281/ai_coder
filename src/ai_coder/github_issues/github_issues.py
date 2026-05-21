@@ -57,8 +57,59 @@ class GitHubIssueCloseResult:
     message: str
 
 
+@dataclass(frozen=True)
+class GitHubIssuePrClosePolicy:
+    pr_creation_allowed_when: tuple[str, ...] = field(default_factory=tuple)
+    issue_closing_allowed_when: tuple[str, ...] = field(default_factory=tuple)
+    tests_must_pass_before_close: bool = True
+    changes_must_be_committed_before_close: bool = True
+    human_approval_required: bool = True
+    direct_issue_close_default_enabled: bool = False
+    automatic_pr_creation_default_enabled: bool = False
+    automatic_issue_closing_default_enabled: bool = False
+    closing_keyword_requires_human_approval: bool = True
+
+
 class GitHubIssueReadError(RuntimeError):
     """Raised when RALPH cannot read open GitHub issues through GitHub CLI."""
+
+
+def i_github_issue_get_safe_pr_close_policy() -> GitHubIssuePrClosePolicy:
+    """Return the default safe policy for future PR creation and issue closing."""
+    return GitHubIssuePrClosePolicy(
+        pr_creation_allowed_when=(
+            "A single actionable GitHub issue was selected.",
+            "The issue was not skipped for being vague, blocked, assigned, unsafe, or outside the configured workflow.",
+            "RALPH worked in a safe worktree or branch instead of the protected host working tree.",
+            "The agent produced the explicit completion signal <promise>COMPLETE</promise>.",
+            "Required tests passed.",
+            "Successful changes were committed.",
+            "The commit hash is known.",
+            "The worktree is clean after commit, or remaining dirty state is treated as a blocker.",
+            "GitHub CLI or GitHub API access is configured and authenticated.",
+            "Dry-run mode is disabled.",
+            "Human approval has been granted unless a future trusted automation setting explicitly allows PR creation.",
+        ),
+        issue_closing_allowed_when=(
+            "A single actionable GitHub issue was selected.",
+            "The issue is fully completed.",
+            "The agent produced the explicit completion signal <promise>COMPLETE</promise>.",
+            "Required tests passed.",
+            "Successful changes were committed.",
+            "The commit hash is known.",
+            "The safe workflow reached final status complete.",
+            "No uncommitted work remains that should be preserved for review.",
+            "The issue is not blocked, unsafe, assigned to someone else, or outside configured label rules.",
+            "Human approval has been granted unless a future trusted automation setting explicitly allows issue closing.",
+        ),
+        tests_must_pass_before_close=True,
+        changes_must_be_committed_before_close=True,
+        human_approval_required=True,
+        direct_issue_close_default_enabled=False,
+        automatic_pr_creation_default_enabled=False,
+        automatic_issue_closing_default_enabled=False,
+        closing_keyword_requires_human_approval=True,
+    )
 
 
 def i_github_issue_from_file(
@@ -698,8 +749,8 @@ def _issue_has_actionable_workflow_label(issue: GitHubIssue) -> bool:
     )
 
 
-def _issue_has_non_empty_label(issue: GitHubIssue) -> bool:  #  Added Code
-    return any(str(label).strip() for label in issue.labels)  #  Added Code
+def _issue_has_non_empty_label(issue: GitHubIssue) -> bool:
+    return any(str(label).strip() for label in issue.labels)
 
 
 def _first_matching_configured_label(

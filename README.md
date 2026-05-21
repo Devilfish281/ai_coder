@@ -234,3 +234,42 @@ The Release 1 command, CLI flags, setup config fields, fake agent behavior, and 
 ```text
 docs/release_1_runtime_contract.md
 ```
+
+## Safe PR and GitHub Issue Close Policy
+
+RALPH does not create pull requests or close GitHub issues automatically in this tracer-bullet slice.
+
+Future pull request creation is allowed only when all of these are true:
+
+1. A single actionable GitHub issue was selected.
+2. The issue was not skipped for being vague, blocked, assigned, unsafe, or outside the configured workflow.
+3. RALPH worked in a safe worktree or branch.
+4. The agent produced `<promise>COMPLETE</promise>`.
+5. Required tests passed.
+6. Successful changes were committed.
+7. The commit hash is known.
+8. The worktree is clean after commit, or remaining dirty state is treated as a blocker.
+9. GitHub access is configured and authenticated.
+10. Dry-run mode is disabled.
+11. Human approval has been granted by default.
+
+Future GitHub issue closing is allowed only when all of these are true:
+
+1. A single actionable GitHub issue was selected.
+2. The issue is fully completed.
+3. The agent produced `<promise>COMPLETE</promise>`.
+4. Required tests passed.
+5. Successful changes were committed.
+6. The commit hash is known.
+7. The safe workflow reached final status `complete`.
+8. No uncommitted work remains that should be preserved for review.
+9. The issue is not blocked, unsafe, assigned to someone else, or outside configured label rules.
+10. Human approval has been granted by default.
+
+Direct issue closing with `gh issue close` remains disabled by default.
+
+Automatic pull request creation remains disabled by default.
+
+Automatic issue closing remains disabled by default.
+
+When RALPH eventually creates PR bodies, it should use `Refs #<issue_number>` when the PR should only link to the issue. It should use `close #<issue_number>` only when human approval confirms that the issue should close after the PR is merged.
