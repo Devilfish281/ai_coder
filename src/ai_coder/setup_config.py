@@ -69,6 +69,8 @@ DEFAULT_GITHUB_UNSAFE_LABEL_LIST: tuple[str, ...] = (
 DEFAULT_GITHUB_SKIP_ASSIGNED_ISSUES = True
 DEFAULT_GITHUB_ALLOWED_ASSIGNEE_LOGINS: tuple[str, ...] = ()
 
+DEFAULT_GITHUB_ISSUE_CLOSE_ENABLED = False
+
 ###############################################################################
 # Paths
 ###############################################################################
@@ -289,6 +291,17 @@ class c_setup_config(BaseModel):
     dry_run: bool = Field(
         default_factory=lambda: c_setup_config.env_bool("DRY_RUN", True),
         description="Safety mode. Release 1 should default to dry-run behavior.",
+    )
+
+    github_issue_close_enabled: bool = Field(
+        default_factory=lambda: c_setup_config.env_bool(
+            "RALPH_GITHUB_ISSUE_CLOSE_ENABLED",
+            DEFAULT_GITHUB_ISSUE_CLOSE_ENABLED,
+        ),
+        description=(
+            "Future issue-close workflow enablement flag. Real issue closing "
+            "is still disabled in the placeholder slice."
+        ),
     )
 
     test_command: str = Field(
@@ -623,6 +636,7 @@ class c_setup_config(BaseModel):
             "default_agent": self.default_agent,
             "codex_command": self.codex_command,
             "dry_run": self.dry_run,
+            "github_issue_close_enabled": self.github_issue_close_enabled,
             "test_command": self.test_command,
             "commit_message_template": self.commit_message_template,
             "sandbox_mode": self.sandbox_mode,
@@ -667,6 +681,7 @@ class c_setup_config(BaseModel):
             f"provider_secret_env_allowlist={self.provider_secret_env_allowlist!r}, "
             f"codex_command={self.codex_command!r}, "
             f"dry_run={self.dry_run!r}, "
+            f"github_issue_close_enabled={self.github_issue_close_enabled!r}, "
             f"test_command={self.test_command!r}, "
             f"commit_message_template={self.commit_message_template!r}, "
             f"sandbox_mode={self.sandbox_mode!r}, "
