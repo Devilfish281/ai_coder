@@ -22,6 +22,45 @@ from ai_coder.github_issues import (
 )
 
 
+###############################################################################
+# Helper function
+###############################################################################
+def _configure_github_issue_safeguards(
+    *,
+    actionable_labels: tuple[str, ...] = (
+        "bug",
+        "tracer",
+        "tracer bullet",
+        "feature",
+        "enhancement",
+        "polish",
+        "refactor",
+        "Sandcastle",
+    ),
+    blocked_labels: tuple[str, ...] = ("blocked",),
+    unsafe_labels: tuple[str, ...] = (
+        "unsafe",
+        "do-not-automate",
+        "manual-only",
+        "security-sensitive",
+    ),
+    skip_assigned_issues: bool = True,
+    allowed_assignees: tuple[str, ...] = (),
+) -> None:
+    github_issues_module.setup_config.github_actionable_label_allowlist = (
+        actionable_labels
+    )
+    github_issues_module.setup_config.github_blocked_label_list = blocked_labels
+    github_issues_module.setup_config.github_unsafe_label_list = unsafe_labels
+    github_issues_module.setup_config.github_skip_assigned_issues = skip_assigned_issues
+    github_issues_module.setup_config.github_allowed_assignee_logins = allowed_assignees
+
+
+###############################################################################
+#  Functiona
+###############################################################################
+
+
 def test_github_issue_from_provided_data_builds_issue() -> None:
     provided_issue = ProvidedIssueData(
         number=10,
@@ -457,6 +496,197 @@ def test_github_issue_skips_issue_blocked_by_open_issue() -> None:
 
     assert selected_issue is not None
     assert selected_issue.number == 1
+
+
+def test_github_issue_select_actionable_uses_configured_blocked_label() -> None:
+    _configure_github_issue_safeguards(
+        blocked_labels=("waiting-on-human",),
+    )
+    issues = [
+        GitHubIssue(
+            number=48,
+            title="Add blocked label safeguard",
+            body="This issue has enough detail but should be blocked by label.",
+            labels=("bug", "waiting-on-human"),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=48,
+            reason="blocked",
+            message="Skipped issue #48 because it has blocked label 'waiting-on-human'.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_uses_configured_unsafe_label() -> None:
+    _configure_github_issue_safeguards(
+        unsafe_labels=("manual-only",),
+    )
+    issues = [
+        GitHubIssue(
+            number=49,
+            title="Review sensitive automation workflow",
+            body="This issue has safe text but should not be automated.",
+            labels=("bug", "manual-only"),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=49,
+            reason="unsafe",
+            message="Skipped issue #49 because it has unsafe label 'manual-only'.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_allows_configured_actionable_label() -> None:
+    _configure_github_issue_safeguards(
+        actionable_labels=("workflow-approved",),
+    )
+    issues = [
+        GitHubIssue(
+            number=50,
+            title="Add workflow approved label support",
+            body="RALPH should treat this configured label as actionable.",
+            labels=("workflow-approved",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 50
+    assert result.skipped_issues == ()
+
+
+def test_github_issue_select_actionable_skips_label_outside_allowed_workflow() -> None:
+    _configure_github_issue_safeguards(
+        actionable_labels=("bug",),
+    )
+    issues = [
+        GitHubIssue(
+            number=51,
+            title="Discuss future roadmap details",
+            body="This issue is clear but does not match the allowed workflow labels.",
+            labels=("discussion",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=51,
+            reason="outside_workflow",
+            message="Skipped issue #51 because it does not have an allowed workflow label.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_matches_configured_labels_case_insensitively() -> (
+    None
+):
+    _configure_github_issue_safeguards(
+        actionable_labels=("Sandcastle",),
+    )
+    issues = [
+        GitHubIssue(
+            number=52,
+            title="Add case insensitive label matching",
+            body="RALPH should trim labels and compare them case-insensitively.",
+            labels=("  sandcastle  ",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 52
+
+
+def test_github_issue_select_actionable_allows_configured_assignee() -> None:
+    _configure_github_issue_safeguards(
+        allowed_assignees=("ralph-bot",),
+    )
+    issues = [
+        GitHubIssue(
+            number=53,
+            title="Allow configured RALPH assignee",
+            body="Assigned work should be selectable when every assignee is allowed.",
+            labels=("bug",),
+            assignees=("RALPH-BOT",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 53
+    assert result.skipped_issues == ()
+
+
+def test_github_issue_select_actionable_skips_unallowed_assignee() -> None:
+    _configure_github_issue_safeguards(
+        allowed_assignees=("ralph-bot",),
+    )
+    issues = [
+        GitHubIssue(
+            number=54,
+            title="Reject non allowed assignee",
+            body="Assigned work should be skipped when an assignee is not allowed.",
+            labels=("bug",),
+            assignees=("octocat",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=54,
+            reason="assigned",
+            message="Skipped issue #54 because assignee 'octocat' is not allowed.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_unsafe_label_wins_over_assignment_skip() -> (
+    None
+):
+    _configure_github_issue_safeguards(
+        unsafe_labels=("manual-only",),
+    )
+    issues = [
+        GitHubIssue(
+            number=55,
+            title="Unsafe assigned issue",
+            body="Unsafe label should be reported before assignment status.",
+            labels=("bug", "manual-only"),
+            assignees=("octocat",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=55,
+            reason="unsafe",
+            message="Skipped issue #55 because it has unsafe label 'manual-only'.",
+        ),
+    )
 
 
 def test_github_issue_returns_none_when_no_actionable_issue_exists() -> None:

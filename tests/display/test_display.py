@@ -92,6 +92,41 @@ def test_display_issue_skip_reasons_stores_readable_messages() -> None:
     ]
 
 
+def test_display_issue_skip_reasons_stores_github_safeguard_messages() -> None:
+    display = SilentDisplay()
+    skipped_issues = (
+        GitHubIssueSkipReason(
+            issue_number=48,
+            reason="blocked",
+            message="Skipped issue #48 because it has blocked label 'waiting-on-human'.",
+        ),
+        GitHubIssueSkipReason(
+            issue_number=49,
+            reason="unsafe",
+            message="Skipped issue #49 because it has unsafe label 'manual-only'.",
+        ),
+        GitHubIssueSkipReason(
+            issue_number=54,
+            reason="assigned",
+            message="Skipped issue #54 because assignee 'octocat' is not allowed.",
+        ),
+        GitHubIssueSkipReason(
+            issue_number=51,
+            reason="outside_workflow",
+            message="Skipped issue #51 because it does not have an allowed workflow label.",
+        ),
+    )
+
+    i_display_issue_skip_reasons(display, skipped_issues)
+
+    assert display.messages == [
+        "Skipped issue #48: blocked — Skipped issue #48 because it has blocked label 'waiting-on-human'.",
+        "Skipped issue #49: unsafe — Skipped issue #49 because it has unsafe label 'manual-only'.",
+        "Skipped issue #54: assigned — Skipped issue #54 because assignee 'octocat' is not allowed.",
+        "Skipped issue #51: outside_workflow — Skipped issue #51 because it does not have an allowed workflow label.",
+    ]
+
+
 def test_display_issue_skip_reasons_ignores_empty_reason_list() -> None:
     display = SilentDisplay()
 
