@@ -47,6 +47,28 @@ DEFAULT_COMMIT_MESSAGE_TEMPLATE = "RALPH: issue #{issue_number} - {issue_title}"
 
 DEFAULT_PROVIDER_ENV_ALLOWLIST: tuple[str, ...] = ()
 DEFAULT_PROVIDER_SECRET_ENV_ALLOWLIST: tuple[str, ...] = ()
+
+
+DEFAULT_GITHUB_ACTIONABLE_LABEL_ALLOWLIST: tuple[str, ...] = (
+    "bug",
+    "tracer",
+    "tracer bullet",
+    "feature",
+    "enhancement",
+    "polish",
+    "refactor",
+    "Sandcastle",
+)
+DEFAULT_GITHUB_BLOCKED_LABEL_LIST: tuple[str, ...] = ("blocked",)
+DEFAULT_GITHUB_UNSAFE_LABEL_LIST: tuple[str, ...] = (
+    "unsafe",
+    "do-not-automate",
+    "manual-only",
+    "security-sensitive",
+)
+DEFAULT_GITHUB_SKIP_ASSIGNED_ISSUES = True
+DEFAULT_GITHUB_ALLOWED_ASSIGNEE_LOGINS: tuple[str, ...] = ()
+
 ###############################################################################
 # Paths
 ###############################################################################
@@ -67,25 +89,23 @@ DEFAULT_DOCKER_BUILD_COMMAND = (
 ##############################################################################
 # Helper Functions
 ###############################################################################
-def _merge_env_name_allowlists(*allowlists: object) -> tuple[str, ...]:  #  Added Code
-    merged_names: list[str] = []  #  Added Code
-    seen_names: set[str] = set()  #  Added Code
+def _merge_env_name_allowlists(*allowlists: object) -> tuple[str, ...]:
+    merged_names: list[str] = []
+    seen_names: set[str] = set()
 
-    for allowlist in allowlists:  #  Added Code
-        raw_names = (
-            (allowlist,) if isinstance(allowlist, str) else allowlist or ()
-        )  #  Added Code
+    for allowlist in allowlists:
+        raw_names = (allowlist,) if isinstance(allowlist, str) else allowlist or ()
 
-        for env_name in raw_names:  #  Added Code
-            cleaned_name = str(env_name).strip()  #  Added Code
+        for env_name in raw_names:
+            cleaned_name = str(env_name).strip()
 
-            if not cleaned_name or cleaned_name in seen_names:  #  Added Code
-                continue  #  Added Code
+            if not cleaned_name or cleaned_name in seen_names:
+                continue
 
-            seen_names.add(cleaned_name)  #  Added Code
-            merged_names.append(cleaned_name)  #  Added Code
+            seen_names.add(cleaned_name)
+            merged_names.append(cleaned_name)
 
-    return tuple(merged_names)  #  Added Code
+    return tuple(merged_names)
 
 
 class c_setup_config(BaseModel):
@@ -203,6 +223,51 @@ class c_setup_config(BaseModel):
             DEFAULT_GITHUB_REPO,
         ),
         description="GitHub owner/repository name.",
+    )
+
+    github_actionable_label_allowlist: tuple[str, ...] = Field(
+        default_factory=lambda: c_setup_config.env_tuple(
+            "RALPH_GITHUB_ACTIONABLE_LABEL_ALLOWLIST",
+            DEFAULT_GITHUB_ACTIONABLE_LABEL_ALLOWLIST,
+        ),
+        description=(
+            "GitHub issue labels that mark an issue as inside the allowed "
+            "RALPH workflow."
+        ),
+    )
+
+    github_blocked_label_list: tuple[str, ...] = Field(
+        default_factory=lambda: c_setup_config.env_tuple(
+            "RALPH_GITHUB_BLOCKED_LABEL_LIST",
+            DEFAULT_GITHUB_BLOCKED_LABEL_LIST,
+        ),
+        description="GitHub issue labels that block RALPH from selecting an issue.",
+    )
+
+    github_unsafe_label_list: tuple[str, ...] = Field(
+        default_factory=lambda: c_setup_config.env_tuple(
+            "RALPH_GITHUB_UNSAFE_LABEL_LIST",
+            DEFAULT_GITHUB_UNSAFE_LABEL_LIST,
+        ),
+        description="GitHub issue labels that mark an issue unsafe for automation.",
+    )
+
+    github_skip_assigned_issues: bool = Field(
+        default_factory=lambda: c_setup_config.env_bool(
+            "RALPH_GITHUB_SKIP_ASSIGNED_ISSUES",
+            DEFAULT_GITHUB_SKIP_ASSIGNED_ISSUES,
+        ),
+        description="Whether RALPH should skip assigned GitHub issues by default.",
+    )
+
+    github_allowed_assignee_logins: tuple[str, ...] = Field(
+        default_factory=lambda: c_setup_config.env_tuple(
+            "RALPH_GITHUB_ALLOWED_ASSIGNEE_LOGINS",
+            DEFAULT_GITHUB_ALLOWED_ASSIGNEE_LOGINS,
+        ),
+        description=(
+            "GitHub assignee logins allowed when assigned issue skipping is enabled."
+        ),
     )
 
     default_agent: str = Field(
@@ -561,6 +626,13 @@ class c_setup_config(BaseModel):
             "test_command": self.test_command,
             "commit_message_template": self.commit_message_template,
             "sandbox_mode": self.sandbox_mode,
+            "github_actionable_label_allowlist": list(
+                self.github_actionable_label_allowlist
+            ),
+            "github_blocked_label_list": list(self.github_blocked_label_list),
+            "github_unsafe_label_list": list(self.github_unsafe_label_list),
+            "github_skip_assigned_issues": self.github_skip_assigned_issues,
+            "github_allowed_assignee_logins": list(self.github_allowed_assignee_logins),
         }
 
     def get_docker_build_command(self) -> str:
@@ -602,6 +674,11 @@ class c_setup_config(BaseModel):
             f"ralph_dockerfile_path={str(self.ralph_dockerfile_path)!r}, "
             f"logger={'Initialized' if self.logger else 'Not Initialized'}, "
             f"llm={'Initialized' if self.llm else 'Not Initialized'}"
+            f"github_actionable_label_allowlist={self.github_actionable_label_allowlist!r}, "
+            f"github_blocked_label_list={self.github_blocked_label_list!r}, "
+            f"github_unsafe_label_list={self.github_unsafe_label_list!r}, "
+            f"github_skip_assigned_issues={self.github_skip_assigned_issues!r}, "
+            f"github_allowed_assignee_logins={self.github_allowed_assignee_logins!r}, "
             ")"
         )
 

@@ -8,7 +8,12 @@ from ai_coder.setup_config import (
     DEFAULT_AGENT_NAME,
     DEFAULT_COMMIT_MESSAGE_TEMPLATE,
     DEFAULT_DOCKER_IMAGE_NAME,
+    DEFAULT_GITHUB_ACTIONABLE_LABEL_ALLOWLIST,
+    DEFAULT_GITHUB_ALLOWED_ASSIGNEE_LOGINS,
+    DEFAULT_GITHUB_BLOCKED_LABEL_LIST,
     DEFAULT_GITHUB_REPO,
+    DEFAULT_GITHUB_SKIP_ASSIGNED_ISSUES,
+    DEFAULT_GITHUB_UNSAFE_LABEL_LIST,
     DEFAULT_PROJECT_NAME,
     DEFAULT_TEST_COMMAND,
     DEFAULT_PROVIDER_ENV_ALLOWLIST,
@@ -41,6 +46,11 @@ _RUNTIME_ENV_NAMES = (
     "CODEX_COMMAND",
     "RALPH_PROVIDER_ENV_ALLOWLIST",
     "RALPH_PROVIDER_SECRET_ENV_ALLOWLIST",
+    "RALPH_GITHUB_ACTIONABLE_LABEL_ALLOWLIST",
+    "RALPH_GITHUB_BLOCKED_LABEL_LIST",
+    "RALPH_GITHUB_UNSAFE_LABEL_LIST",
+    "RALPH_GITHUB_SKIP_ASSIGNED_ISSUES",
+    "RALPH_GITHUB_ALLOWED_ASSIGNEE_LOGINS",
 )
 
 
@@ -292,6 +302,135 @@ def test_setup_config_default_docker_image_name_is_release_2_default(
 
     assert DEFAULT_DOCKER_IMAGE_NAME == "ai-code-ralph-test-runtime:latest"
     assert config.docker_image_name == DEFAULT_DOCKER_IMAGE_NAME
+
+
+def test_setup_config_default_github_label_safeguard_config_exists(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    config = _fresh_config()
+
+    assert DEFAULT_GITHUB_ACTIONABLE_LABEL_ALLOWLIST == (
+        "bug",
+        "tracer",
+        "tracer bullet",
+        "feature",
+        "enhancement",
+        "polish",
+        "refactor",
+        "Sandcastle",
+    )
+    assert DEFAULT_GITHUB_BLOCKED_LABEL_LIST == ("blocked",)
+    assert DEFAULT_GITHUB_UNSAFE_LABEL_LIST == (
+        "unsafe",
+        "do-not-automate",
+        "manual-only",
+        "security-sensitive",
+    )
+    assert (
+        config.github_actionable_label_allowlist
+        == DEFAULT_GITHUB_ACTIONABLE_LABEL_ALLOWLIST
+    )
+    assert config.github_blocked_label_list == DEFAULT_GITHUB_BLOCKED_LABEL_LIST
+    assert config.github_unsafe_label_list == DEFAULT_GITHUB_UNSAFE_LABEL_LIST
+
+
+def test_setup_config_loads_github_label_safeguards_from_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "RALPH_GITHUB_ACTIONABLE_LABEL_ALLOWLIST",
+        "bug, workflow-approved; Sandcastle",
+    )
+    monkeypatch.setenv(
+        "RALPH_GITHUB_BLOCKED_LABEL_LIST",
+        "blocked, waiting-on-human",
+    )
+    monkeypatch.setenv(
+        "RALPH_GITHUB_UNSAFE_LABEL_LIST",
+        "manual-only, do-not-automate",
+    )
+
+    config = _fresh_config()
+
+    assert config.github_actionable_label_allowlist == (
+        "bug",
+        "workflow-approved",
+        "Sandcastle",
+    )
+    assert config.github_blocked_label_list == (
+        "blocked",
+        "waiting-on-human",
+    )
+    assert config.github_unsafe_label_list == (
+        "manual-only",
+        "do-not-automate",
+    )
+
+
+def test_setup_config_default_assignment_safeguard_config_exists(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    config = _fresh_config()
+
+    assert DEFAULT_GITHUB_SKIP_ASSIGNED_ISSUES is True
+    assert DEFAULT_GITHUB_ALLOWED_ASSIGNEE_LOGINS == ()
+    assert config.github_skip_assigned_issues is True
+    assert config.github_allowed_assignee_logins == ()
+
+
+def test_setup_config_loads_assignment_safeguards_from_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_GITHUB_SKIP_ASSIGNED_ISSUES", "false")
+    monkeypatch.setenv(
+        "RALPH_GITHUB_ALLOWED_ASSIGNEE_LOGINS",
+        "ralph-bot, Devilfish281",
+    )
+
+    config = _fresh_config()
+
+    assert config.github_skip_assigned_issues is False
+    assert config.github_allowed_assignee_logins == (
+        "ralph-bot",
+        "Devilfish281",
+    )
+
+
+def test_setup_config_to_dict_includes_github_safeguard_settings(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("RALPH_GITHUB_ACTIONABLE_LABEL_ALLOWLIST", "bug")
+    monkeypatch.setenv("RALPH_GITHUB_BLOCKED_LABEL_LIST", "blocked")
+    monkeypatch.setenv("RALPH_GITHUB_UNSAFE_LABEL_LIST", "manual-only")
+    monkeypatch.setenv("RALPH_GITHUB_SKIP_ASSIGNED_ISSUES", "true")
+    monkeypatch.setenv("RALPH_GITHUB_ALLOWED_ASSIGNEE_LOGINS", "ralph-bot")
+
+    config = _fresh_config()
+
+    result = config.to_dict()
+
+    assert result["github_actionable_label_allowlist"] == ["bug"]
+    assert result["github_blocked_label_list"] == ["blocked"]
+    assert result["github_unsafe_label_list"] == ["manual-only"]
+    assert result["github_skip_assigned_issues"] is True
+    assert result["github_allowed_assignee_logins"] == ["ralph-bot"]
 
 
 def test_setup_config_env_values_override_defaults(monkeypatch, tmp_path) -> None:

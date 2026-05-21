@@ -177,7 +177,7 @@ def _build_gh_issue_list_command(
         "--state",
         "open",
         "--json",
-        "number,title,body,labels,assignees,state",  #  Changed Code
+        "number,title,body,labels,assignees,state",
     ]
 
     if label and label.strip():
@@ -535,19 +535,38 @@ def _evaluate_issue_actionability(
             ),
         )
 
-    if _issue_has_blocked_label(issue):
+    blocked_label = _issue_has_configured_blocked_label(issue)
+    if blocked_label is not None:
+        if _normalize_label_text(blocked_label) == "blocked":
+            blocked_message = (
+                f"Skipped issue #{issue.number} because it is marked blocked."
+            )
+        else:
+            blocked_message = (
+                f"Skipped issue #{issue.number} because it has blocked label "
+                f"{blocked_label!r}."
+            )
+
         return _skip_reason(
             issue=issue,
             reason="blocked",
-            message=f"Skipped issue #{issue.number} because it is marked blocked.",
+            message=blocked_message,
         )
 
-    if issue.assignees:
+    unsafe_label = _issue_has_configured_unsafe_label(issue)
+    if unsafe_label is not None:
         return _skip_reason(
             issue=issue,
-            reason="assigned",
-            message=f"Skipped issue #{issue.number} because it is already assigned.",
+            reason="unsafe",
+            message=(
+                f"Skipped issue #{issue.number} because it has unsafe label "
+                f"{unsafe_label!r}."
+            ),
         )
+
+    assignment_skip_reason = _assignment_skip_reason(issue)
+    if assignment_skip_reason is not None:
+        return assignment_skip_reason
 
     if _issue_is_unsafe(issue):
         return _skip_reason(
@@ -556,6 +575,18 @@ def _evaluate_issue_actionability(
             message=(
                 f"Skipped issue #{issue.number} because it contains unsafe "
                 "automation instructions."
+            ),
+        )
+
+    if _issue_has_non_empty_label(issue) and not _issue_has_actionable_workflow_label(
+        issue
+    ):
+        return _skip_reason(
+            issue=issue,
+            reason="outside_workflow",
+            message=(
+                f"Skipped issue #{issue.number} because it does not have "
+                "an allowed workflow label."
             ),
         )
 
@@ -573,7 +604,168 @@ def _evaluate_issue_actionability(
 
 
 def _issue_has_blocked_label(issue: GitHubIssue) -> bool:
-    return any(label.strip().lower() == "blocked" for label in issue.labels)
+    return _issue_has_configured_blocked_label(issue) is not None
+
+
+def _configured_actionable_label_markers() -> tuple[str, ...]:
+    raw_markers = getattr(
+        setup_config,
+        "github_actionable_label_allowlist",
+        ACTIONABLE_LABEL_MARKERS,
+    )
+    return _normalize_configured_label_markers(raw_markers)
+
+
+def _configured_blocked_label_markers() -> tuple[str, ...]:
+    raw_markers = getattr(
+        setup_config,
+        "github_blocked_label_list",
+        ("blocked",),
+    )
+    return _normalize_configured_label_markers(raw_markers)
+
+
+def _configured_unsafe_label_markers() -> tuple[str, ...]:
+    raw_markers = getattr(
+        setup_config,
+        "github_unsafe_label_list",
+        (),
+    )
+    return _normalize_configured_label_markers(raw_markers)
+
+
+def _configured_allowed_assignee_logins() -> tuple[str, ...]:
+    raw_logins = getattr(
+        setup_config,
+        "github_allowed_assignee_logins",
+        (),
+    )
+    return _normalize_configured_label_markers(raw_logins)
+
+
+def _normalize_configured_label_markers(
+    markers: Iterable[object],
+) -> tuple[str, ...]:
+    normalized_markers: list[str] = []
+    seen_markers: set[str] = set()
+
+    for marker in markers:
+        normalized_marker = _normalize_label_text(marker)
+
+        if not normalized_marker or normalized_marker in seen_markers:
+            continue
+
+        seen_markers.add(normalized_marker)
+        normalized_markers.append(normalized_marker)
+
+    return tuple(normalized_markers)
+
+
+def _normalize_label_text(label_text: object) -> str:
+    return str(label_text).strip().casefold()
+
+
+def _issue_has_configured_blocked_label(
+    issue: GitHubIssue,
+) -> str | None:
+    return _first_matching_configured_label(
+        labels=issue.labels,
+        configured_markers=_configured_blocked_label_markers(),
+    )
+
+
+def _issue_has_configured_unsafe_label(
+    issue: GitHubIssue,
+) -> str | None:
+    return _first_matching_configured_label(
+        labels=issue.labels,
+        configured_markers=_configured_unsafe_label_markers(),
+    )
+
+
+def _issue_has_actionable_workflow_label(issue: GitHubIssue) -> bool:
+    actionable_markers = _configured_actionable_label_markers()
+
+    if not actionable_markers:
+        return True
+
+    return (
+        _first_matching_configured_label(
+            labels=issue.labels,
+            configured_markers=actionable_markers,
+        )
+        is not None
+    )
+
+
+def _issue_has_non_empty_label(issue: GitHubIssue) -> bool:  #  Added Code
+    return any(str(label).strip() for label in issue.labels)  #  Added Code
+
+
+def _first_matching_configured_label(
+    labels: Iterable[object],
+    configured_markers: Iterable[str],
+) -> str | None:
+    marker_set = set(configured_markers)
+
+    if not marker_set:
+        return None
+
+    for label in labels:
+        cleaned_label = str(label).strip()
+
+        if not cleaned_label:
+            continue
+
+        if _normalize_label_text(cleaned_label) in marker_set:
+            return cleaned_label
+
+    return None
+
+
+def _assignment_skip_reason(
+    issue: GitHubIssue,
+) -> GitHubIssueSkipReason | None:
+    if not issue.assignees:
+        return None
+
+    skip_assigned_issues = getattr(
+        setup_config,
+        "github_skip_assigned_issues",
+        True,
+    )
+
+    if not skip_assigned_issues:
+        return None
+
+    allowed_assignee_logins = _configured_allowed_assignee_logins()
+
+    if not allowed_assignee_logins:
+        return _skip_reason(
+            issue=issue,
+            reason="assigned",
+            message=f"Skipped issue #{issue.number} because it is already assigned.",
+        )
+
+    allowed_assignee_set = set(allowed_assignee_logins)
+
+    for assignee in issue.assignees:
+        cleaned_assignee = str(assignee).strip()
+
+        if not cleaned_assignee:
+            continue
+
+        if _normalize_label_text(cleaned_assignee) not in allowed_assignee_set:
+            return _skip_reason(
+                issue=issue,
+                reason="assigned",
+                message=(
+                    f"Skipped issue #{issue.number} because assignee "
+                    f"{cleaned_assignee!r} is not allowed."
+                ),
+            )
+
+    return None
 
 
 def _open_blocked_body_marker(
@@ -599,11 +791,7 @@ def _blocked_issue_numbers_from_body(issue_body: str) -> tuple[int, ...]:
 def _issue_is_vague(issue: GitHubIssue) -> bool:
     title_word_count = len(issue.title.split())
     body_character_count = len("".join(issue.body.split()))
-    label_text = " ".join(issue.labels).lower()
-
-    has_actionable_label = any(
-        marker in label_text for marker in ACTIONABLE_LABEL_MARKERS
-    )
+    has_actionable_label = _issue_has_actionable_workflow_label(issue)
 
     return (
         title_word_count < 3 and body_character_count < 20 and not has_actionable_label
