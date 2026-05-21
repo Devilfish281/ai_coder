@@ -24,9 +24,13 @@ from ai_coder.display import (
     i_display_commit_result,
     i_display_issue_skip_reasons,
     i_display_phase,
+    i_display_pull_request_draft,
+    i_display_redact_text,
     i_display_selected_issue,
     i_display_test_result,
 )
+
+from ai_coder.pull_request_draft import PullRequestDraftResult
 
 
 def test_silent_display_stores_messages_without_printing(capsys) -> None:
@@ -313,3 +317,82 @@ def test_display_agent_events_ignores_empty_event_list() -> None:
     i_display_agent_events(display, ())
 
     assert display.messages == []
+
+
+def test_display_pull_request_draft_shows_ready_placeholder_output() -> None:
+    display = SilentDisplay()
+    pull_request_draft_result = PullRequestDraftResult(
+        ready=True,
+        created=False,
+        enabled=False,
+        future_disabled=True,
+        issue_number=50,
+        issue_title="Add pull request draft workflow placeholder",
+        base_branch="main",
+        head_branch="ralph/issue-050-add-pr-draft-placeholder",
+        commit_hash="abc123def456",
+        title="RALPH: issue #50 - Add pull request draft workflow placeholder",
+        body=(
+            "Refs #50\n\n"
+            "Commit: abc123def456\n"
+            "Verification: poetry run pytest passed.\n\n"
+            "Pull request creation is future/disabled in this workflow slice.\n"
+            "No pull request was created."
+        ),
+        suggested_command=(
+            "gh pr create --draft --base main "
+            "--head ralph/issue-050-add-pr-draft-placeholder "
+            "--title <reviewed-title> "
+            "--body-file .ai_coder/pr_draft_body.md"
+        ),
+        message=(
+            "Pull request workflow is future/disabled. "
+            "Draft metadata is ready, but no pull request was created."
+        ),
+    )
+
+    i_display_pull_request_draft(display, pull_request_draft_result)
+
+    assert display.messages == [
+        "Pull request workflow: future/disabled.",
+        "No pull request was created.",
+        "Draft PR title: RALPH: issue #50 - Add pull request draft workflow placeholder",
+        (
+            "Suggested PR command: gh pr create --draft --base main "
+            "--head ralph/issue-050-add-pr-draft-placeholder "
+            "--title <reviewed-title> "
+            "--body-file .ai_coder/pr_draft_body.md"
+        ),
+    ]
+
+
+def test_display_pull_request_draft_shows_skipped_placeholder_output() -> None:
+    display = SilentDisplay()
+    pull_request_draft_result = PullRequestDraftResult(
+        ready=False,
+        created=False,
+        enabled=False,
+        future_disabled=True,
+        issue_number=50,
+        issue_title="Add pull request draft workflow placeholder",
+        base_branch="main",
+        head_branch="ralph/issue-050-add-pr-draft-placeholder",
+        commit_hash="",
+        title="",
+        body="",
+        suggested_command="",
+        message=(
+            "Pull request workflow skipped. RALPH did not complete with "
+            "tests passed and committed changes. No pull request was created."
+        ),
+    )
+
+    i_display_pull_request_draft(display, pull_request_draft_result)
+
+    assert display.messages == [
+        "Pull request workflow: skipped.",
+        (
+            "Reason: Pull request workflow skipped. RALPH did not complete with "
+            "tests passed and committed changes. No pull request was created."
+        ),
+    ]

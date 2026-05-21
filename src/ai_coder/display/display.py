@@ -179,6 +179,32 @@ def i_display_cleanup_result(
         display.i_display_message(message)
 
 
+def i_display_pull_request_draft(
+    display: DisplayProtocol,
+    pull_request_draft_result: object,
+) -> None:
+    ready = bool(getattr(pull_request_draft_result, "ready", False))
+    title = str(getattr(pull_request_draft_result, "title", "")).strip()
+    suggested_command = str(
+        getattr(pull_request_draft_result, "suggested_command", "")
+    ).strip()
+    message = str(getattr(pull_request_draft_result, "message", "")).strip()
+
+    if not ready:
+        display.i_display_message("Pull request workflow: skipped.")
+        display.i_display_message(f"Reason: {_format_output_text(message)}")
+        return
+
+    display.i_display_message("Pull request workflow: future/disabled.")
+    display.i_display_message("No pull request was created.")
+
+    if title:
+        display.i_display_message(f"Draft PR title: {title}")
+
+    if suggested_command:
+        display.i_display_message(f"Suggested PR command: {suggested_command}")
+
+
 def _format_agent_event_message(event: AgentProviderEvent) -> str:
     if event.normalized_type == NORMALIZED_EVENT_TYPE_SESSION:
         return _format_agent_session_event(event)
