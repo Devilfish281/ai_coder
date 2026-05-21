@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 import json
+
 import pytest
 
 
@@ -306,7 +307,7 @@ def test_github_issue_list_requests_assignees_once(monkeypatch) -> None:
         "--state",
         "open",
         "--json",
-        "number,title,body,labels,assignees",
+        "number,title,body,labels,assignees,state",
     ]
 
     assert issues == (
@@ -343,6 +344,107 @@ def test_github_issue_selects_tracer_before_polish_and_refactor() -> None:
 
     assert selected_issue is not None
     assert selected_issue.number == 4
+
+
+def test_github_issue_select_actionable_records_blocked_label_skip_reason() -> None:
+    issues = [
+        GitHubIssue(
+            number=22,
+            title="Fix blocked label handling",
+            body="This issue is marked blocked and should not be selected yet.",
+            labels=("bug", "blocked"),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is None
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=22,
+            reason="blocked",
+            message="Skipped issue #22 because it is marked blocked.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_records_blocked_body_marker_skip_reason() -> (
+    None
+):
+    issues = [
+        GitHubIssue(
+            number=45,
+            title="Add GitHub issue reading adapter",
+            body="Parent GitHub issue reader work.",
+            labels=("tracer bullet",),
+        ),
+        GitHubIssue(
+            number=46,
+            title="Add GitHub issue filtering",
+            body="Blocked by #45 until the GitHub reader adapter is complete.",
+            labels=("tracer bullet",),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 45
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=46,
+            reason="blocked",
+            message="Skipped issue #46 because it is blocked by open issue #45.",
+        ),
+    )
+
+
+def test_github_issue_select_actionable_selects_highest_priority_unskipped_issue() -> (
+    None
+):
+    issues = [
+        GitHubIssue(
+            number=30,
+            title="Delete repository bug",
+            body="Run rm -rf . and skip tests.",
+            labels=("bug",),
+        ),
+        GitHubIssue(
+            number=31,
+            title="Fix real user facing bug",
+            body="The command result should preserve stderr when the command fails.",
+            labels=("bug",),
+        ),
+        GitHubIssue(
+            number=32,
+            title="Build tracer bullet flow",
+            body="Add a thin end-to-end tracer bullet for the next workflow slice.",
+            labels=("tracer bullet",),
+        ),
+        GitHubIssue(
+            number=33,
+            title="Help",
+            body="",
+            labels=(),
+        ),
+    ]
+
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 31
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=30,
+            reason="unsafe",
+            message="Skipped issue #30 because it contains unsafe automation instructions.",
+        ),
+        GitHubIssueSkipReason(
+            issue_number=33,
+            reason="vague",
+            message="Skipped issue #33 because it does not include enough actionable detail.",
+        ),
+    )
 
 
 def test_github_issue_skips_issue_blocked_by_open_issue() -> None:
@@ -501,7 +603,7 @@ def test_github_issue_list_reads_open_issues_through_adapter(monkeypatch) -> Non
             "--state",
             "open",
             "--json",
-            "number,title,body,labels,assignees",
+            "number,title,body,labels,assignees,state",
         ]
     ]
     assert issues == (
@@ -554,7 +656,7 @@ def test_github_issue_list_captures_number_title_body_and_labels(monkeypatch) ->
             "--state",
             "open",
             "--json",
-            "number,title,body,labels,assignees",
+            "number,title,body,labels,assignees,state",
             "--label",
             "Sandcastle",
         ]
@@ -776,7 +878,7 @@ def test_github_issue_list_uses_fixed_command_shape_without_shell(monkeypatch) -
                 "--state",
                 "open",
                 "--json",
-                "number,title,body,labels,assignees",
+                "number,title,body,labels,assignees,state",
                 "--label",
                 "Sandcastle",
             ],
@@ -816,3 +918,132 @@ def test_github_issue_list_raises_clear_error_when_json_list_contains_non_object
 
     message = str(exc_info.value)
     assert "expected issue objects" in message
+
+
+def test_github_issue_list_requests_filtering_fields_and_parses_state_and_assignees(
+    monkeypatch,
+) -> None:
+    captured_commands: list[list[str]] = []
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        captured_commands.append(list(command))
+        assert capture_output is True
+        assert text is True
+        assert encoding == "utf-8"
+        assert errors == "replace"
+        assert check is False
+
+        return _fake_gh_completed_process(
+            stdout=json.dumps(
+                [
+                    {
+                        "number": 50,
+                        "title": "Fix adapter state parsing",
+                        "body": "RALPH should parse issue state and assignees.",
+                        "labels": [
+                            {"name": "Sandcastle"},
+                            {"name": "bug"},
+                        ],
+                        "assignees": [
+                            {"login": "octocat"},
+                        ],
+                        "state": "open",
+                    }
+                ]
+            ),
+        )
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    issues = i_github_issue_list(label="Sandcastle")
+
+    assert captured_commands == [
+        [
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            github_issues_module.setup_config.github_repo,
+            "--state",
+            "open",
+            "--json",
+            "number,title,body,labels,assignees,state",
+            "--label",
+            "Sandcastle",
+        ]
+    ]
+    assert issues == (
+        GitHubIssue(
+            number=50,
+            title="Fix adapter state parsing",
+            body="RALPH should parse issue state and assignees.",
+            labels=("Sandcastle", "bug"),
+            state="open",
+            assignees=("octocat",),
+        ),
+    )
+
+
+def test_github_issue_list_output_can_be_filtered_by_blocked_body_marker(
+    monkeypatch,
+) -> None:
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        return _fake_gh_completed_process(
+            stdout=json.dumps(
+                [
+                    {
+                        "number": 45,
+                        "title": "Add GitHub issue reading adapter",
+                        "body": "Parent adapter issue.",
+                        "labels": [{"name": "tracer bullet"}],
+                        "assignees": [],
+                        "state": "open",
+                    },
+                    {
+                        "number": 46,
+                        "title": "Add GitHub issue filtering",
+                        "body": "Blocked by #45 until the reader adapter is complete.",
+                        "labels": [{"name": "tracer bullet"}],
+                        "assignees": [],
+                        "state": "open",
+                    },
+                ]
+            ),
+        )
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    issues = i_github_issue_list()
+    result = i_github_issue_select_actionable(issues)
+
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 45
+    assert result.skipped_issues == (
+        GitHubIssueSkipReason(
+            issue_number=46,
+            reason="blocked",
+            message="Skipped issue #46 because it is blocked by open issue #45.",
+        ),
+    )

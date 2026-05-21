@@ -71,6 +71,20 @@ def i_display_selected_issue(
     display.i_display_message(f"Selected issue #{issue_number}: {issue_title}")
 
 
+def i_display_issue_skip_reasons(
+    display: DisplayProtocol,
+    skipped_issues: Iterable[object],
+) -> None:
+    for skipped_issue in skipped_issues:
+        issue_number = getattr(skipped_issue, "issue_number", "")
+        reason = getattr(skipped_issue, "reason", "")
+        message = getattr(skipped_issue, "message", "")
+
+        display.i_display_message(
+            f"Skipped issue #{issue_number}: {reason} — {message}"
+        )
+
+
 def i_display_agent_events(
     display: DisplayProtocol,
     events: Iterable[AgentProviderEvent],

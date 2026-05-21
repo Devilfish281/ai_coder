@@ -1,6 +1,9 @@
 # tests/display/test_display.py
-# tests/display/test_display.py
 from pathlib import Path
+
+
+from ai_coder.github_issues import GitHubIssueSkipReason
+
 
 from ai_coder.agent_provider import (
     AgentProviderEvent,
@@ -10,6 +13,8 @@ from ai_coder.agent_provider import (
     NORMALIZED_EVENT_TYPE_TEXT,
     NORMALIZED_EVENT_TYPE_TOOL_CALL,
 )
+
+
 from ai_coder.display import (
     ConsoleDisplay,
     SilentDisplay,
@@ -17,6 +22,7 @@ from ai_coder.display import (
     i_display_cleanup_result,
     i_display_command_failure,
     i_display_commit_result,
+    i_display_issue_skip_reasons,
     i_display_phase,
     i_display_selected_issue,
     i_display_test_result,
@@ -61,6 +67,37 @@ def test_display_selected_issue_stores_issue_number_and_title() -> None:
     )
 
     assert display.messages == ["Selected issue #25: Add display and logging phases"]
+
+
+def test_display_issue_skip_reasons_stores_readable_messages() -> None:
+    display = SilentDisplay()
+    skipped_issues = (
+        GitHubIssueSkipReason(
+            issue_number=4,
+            reason="vague",
+            message="Skipped issue #4 because it does not include enough actionable detail.",
+        ),
+        GitHubIssueSkipReason(
+            issue_number=5,
+            reason="unsafe",
+            message="Skipped issue #5 because it contains unsafe automation instructions.",
+        ),
+    )
+
+    i_display_issue_skip_reasons(display, skipped_issues)
+
+    assert display.messages == [
+        "Skipped issue #4: vague — Skipped issue #4 because it does not include enough actionable detail.",
+        "Skipped issue #5: unsafe — Skipped issue #5 because it contains unsafe automation instructions.",
+    ]
+
+
+def test_display_issue_skip_reasons_ignores_empty_reason_list() -> None:
+    display = SilentDisplay()
+
+    i_display_issue_skip_reasons(display, ())
+
+    assert display.messages == []
 
 
 def test_display_command_failure_includes_stdout_stderr_and_exit_code() -> None:
