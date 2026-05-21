@@ -173,3 +173,29 @@ def test_prompt_preprocess_preserves_windows_special_characters_as_text() -> Non
     )
 
     assert result == f"Windows text: {windows_text}"
+
+
+def test_prompt_preprocess_does_not_reprocess_placeholders_from_values() -> None:
+    raw_prompt = (
+        "Title: {{ISSUE_TITLE}}\n"
+        "Body: {{ISSUE_BODY}}\n"
+        "Labels: {{ISSUE_LABELS}}\n"
+        "Done: {{COMPLETE_TOKEN}}"
+    )
+
+    result = i_prompt_preprocess(
+        raw_prompt,
+        {
+            "ISSUE_TITLE": "Fix literal {{ISSUE_BODY}}",
+            "ISSUE_BODY": "Body contains literal {{COMPLETE_TOKEN}}",
+            "ISSUE_LABELS": "label {{WORKTREE_PATH}}",
+            "COMPLETE_TOKEN": "<promise>COMPLETE</promise>",
+            "WORKTREE_PATH": r"C:\repo\.ai_coder\worktrees\issue-47",
+        },
+    )
+
+    assert "Title: Fix literal {{ISSUE_BODY}}" in result
+    assert "Body: Body contains literal {{COMPLETE_TOKEN}}" in result
+    assert "Labels: label {{WORKTREE_PATH}}" in result
+    assert "Done: <promise>COMPLETE</promise>" in result
+    assert r"C:\repo\.ai_coder\worktrees\issue-47" not in result

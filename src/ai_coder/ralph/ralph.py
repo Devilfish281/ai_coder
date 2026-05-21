@@ -131,7 +131,17 @@ Repository context
 {{REPOSITORY_CONTEXT}}
 
 
+GitHub issue
+
 Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
+
+Issue number: {{ISSUE_NUMBER}}
+
+Issue title: {{ISSUE_TITLE}}
+
+Issue labels: {{ISSUE_LABELS}}
+
+Issue body:
 
 {{ISSUE_BODY}}
 
