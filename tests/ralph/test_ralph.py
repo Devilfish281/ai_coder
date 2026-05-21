@@ -962,6 +962,55 @@ def test_ralph_returns_blocked_when_test_command_is_missing(
     assert "Preserved worktree:" in result.message
 
 
+def test_ralph_returns_blocked_when_github_issue_reading_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _refresh_ralph_config()
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+
+    ralph_module.setup_config.testing_flag = False
+    ralph_module.setup_config.issue_number = 0
+    ralph_module.setup_config.issue_title = ""
+    ralph_module.setup_config.issue_body = ""
+    ralph_module.setup_config.label = "Sandcastle"
+    ralph_module.setup_config.github_issue_path = tmp_path / "missing-github-issue.md"
+
+    blocked_message = (
+        "Blocked: unable to read open GitHub issues. "
+        "Confirm GitHub CLI access and GITHUB_REPO configuration. "
+        "Details: test GitHub CLI failure"
+    )
+
+    def fake_github_issue_list(label=None):
+        raise ralph_module.GitHubIssueReadError(blocked_message)
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_github_issue_list",
+        fake_github_issue_list,
+    )
+
+    display = SilentDisplay()
+
+    result = i_ralph_run(
+        issues=None,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    display_text = "\n".join(display.messages)
+
+    assert result.completed is False
+    assert result.status == RALPH_STATUS_BLOCKED
+    assert result.selected_issue is None
+    assert result.prompt == ""
+    assert result.orchestrator_result is None
+    assert "unable to read open GitHub issues" in result.message
+    assert blocked_message in result.message
+    assert blocked_message in display_text
+
+
 def test_ralph_default_agent_provider_runs_through_sandbox_seam(
     monkeypatch,
     tmp_path,

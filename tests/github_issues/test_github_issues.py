@@ -1,7 +1,7 @@
 # tests\github_issues\test_github_issues.py
 
 from types import SimpleNamespace
-
+import json
 import pytest
 
 
@@ -453,3 +453,366 @@ def test_github_issue_from_provided_data_preserves_labels_with_special_character
     assert issue.labels == special_labels
     assert issue.labels[0] == "label:needs-review"
     assert issue.labels[-1] == "caret ^"
+
+
+def test_github_issue_list_reads_open_issues_through_adapter(monkeypatch) -> None:
+    captured_commands: list[list[str]] = []
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        captured_commands.append(list(command))
+        assert capture_output is True
+        assert text is True
+        assert encoding == "utf-8"
+        assert errors == "replace"
+        assert check is False
+
+        return _fake_gh_completed_process(
+            stdout=(
+                '[{"number":45,'
+                '"title":"Add GitHub issue reading adapter",'
+                '"body":"Read open GitHub issues through a real adapter.",'
+                '"labels":[{"name":"Sandcastle"},{"name":"tracer bullet"}],'
+                '"assignees":[]}]'
+            ),
+        )
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    issues = i_github_issue_list()
+
+    assert captured_commands == [
+        [
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            github_issues_module.setup_config.github_repo,
+            "--state",
+            "open",
+            "--json",
+            "number,title,body,labels,assignees",
+        ]
+    ]
+    assert issues == (
+        GitHubIssue(
+            number=45,
+            title="Add GitHub issue reading adapter",
+            body="Read open GitHub issues through a real adapter.",
+            labels=("Sandcastle", "tracer bullet"),
+        ),
+    )
+
+
+def test_github_issue_list_captures_number_title_body_and_labels(monkeypatch) -> None:
+    captured_commands: list[list[str]] = []
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        captured_commands.append(list(command))
+        return _fake_gh_completed_process(
+            stdout=(
+                '[{"number":46,'
+                '"title":"Read GitHub issue labels",'
+                '"body":"RALPH should capture title, body, labels, and issue number.",'
+                '"labels":[{"name":"bug"},{"name":"Sandcastle"}],'
+                '"assignees":[]}]'
+            ),
+        )
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    issues = i_github_issue_list(label="Sandcastle")
+
+    assert captured_commands == [
+        [
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            github_issues_module.setup_config.github_repo,
+            "--state",
+            "open",
+            "--json",
+            "number,title,body,labels,assignees",
+            "--label",
+            "Sandcastle",
+        ]
+    ]
+    assert len(issues) == 1
+    assert issues[0].number == 46
+    assert issues[0].title == "Read GitHub issue labels"
+    assert (
+        issues[0].body == "RALPH should capture title, body, labels, and issue number."
+    )
+    assert issues[0].labels == ("bug", "Sandcastle")
+
+
+def test_github_issue_list_raises_clear_error_when_gh_command_fails(
+    monkeypatch,
+) -> None:
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        return _fake_gh_completed_process(
+            returncode=1,
+            stderr="HTTP 401: authentication failed",
+        )
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Blocked: unable to read open GitHub issues"
+    ) as exc_info:
+        i_github_issue_list()
+
+    message = str(exc_info.value)
+    assert "Confirm GitHub CLI access" in message
+    assert "GITHUB_REPO" in message
+    assert "HTTP 401: authentication failed" in message
+
+
+def test_github_issue_list_raises_clear_error_when_gh_is_missing(monkeypatch) -> None:
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        raise FileNotFoundError("No such file or directory: 'gh'")
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Blocked: unable to read open GitHub issues"
+    ) as exc_info:
+        i_github_issue_list()
+
+    message = str(exc_info.value)
+    assert "Confirm GitHub CLI access" in message
+    assert "GITHUB_REPO" in message
+    assert "gh" in message.lower()
+
+
+def test_github_issue_list_raises_clear_error_when_json_is_malformed(
+    monkeypatch,
+) -> None:
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        return _fake_gh_completed_process(
+            stdout="{not valid json",
+        )
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Blocked: unable to read open GitHub issues"
+    ) as exc_info:
+        i_github_issue_list()
+
+    message = str(exc_info.value)
+    assert "Confirm GitHub CLI access" in message
+    assert "GITHUB_REPO" in message
+    assert "json" in message.lower()
+
+
+def _fake_gh_completed_process(
+    *,
+    returncode: int = 0,
+    stdout: str = "[]",
+    stderr: str = "",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def test_github_issue_list_preserves_shell_like_issue_text_as_inert_text(
+    monkeypatch,
+) -> None:
+    captured_commands: list[list[str]] = []
+    shell_like_title = r"Fix Windows path C:\Users\ME\project && echo unsafe"
+    shell_like_body = "Body includes !`echo unsafe` and {{ISSUE_BODY}}"
+    shell_like_label = "bug && echo unsafe"
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        captured_commands.append(list(command))
+        return _fake_gh_completed_process(
+            stdout=json.dumps(
+                [
+                    {
+                        "number": 47,
+                        "title": shell_like_title,
+                        "body": shell_like_body,
+                        "labels": [
+                            {"name": "Sandcastle"},
+                            {"name": shell_like_label},
+                        ],
+                        "assignees": [],
+                    }
+                ]
+            ),
+        )
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    issues = i_github_issue_list()
+
+    assert len(issues) == 1
+    assert issues[0].number == 47
+    assert issues[0].title == shell_like_title
+    assert issues[0].body == shell_like_body
+    assert issues[0].labels == ("Sandcastle", shell_like_label)
+
+    command_text = " ".join(captured_commands[0])
+    assert shell_like_title not in captured_commands[0]
+    assert shell_like_body not in captured_commands[0]
+    assert shell_like_label not in captured_commands[0]
+    assert "&& echo unsafe" not in command_text
+    assert "!`echo unsafe`" not in command_text
+    assert "{{ISSUE_BODY}}" not in command_text
+
+
+def test_github_issue_list_uses_fixed_command_shape_without_shell(monkeypatch) -> None:
+    captured_calls: list[dict[str, object]] = []
+
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+        **kwargs,
+    ):
+        captured_calls.append(
+            {
+                "command": list(command),
+                "capture_output": capture_output,
+                "text": text,
+                "encoding": encoding,
+                "errors": errors,
+                "check": check,
+                "kwargs": kwargs,
+            }
+        )
+        return _fake_gh_completed_process(stdout="[]")
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    issues = i_github_issue_list(label="Sandcastle")
+
+    assert issues == ()
+    assert captured_calls == [
+        {
+            "command": [
+                "gh",
+                "issue",
+                "list",
+                "--repo",
+                github_issues_module.setup_config.github_repo,
+                "--state",
+                "open",
+                "--json",
+                "number,title,body,labels,assignees",
+                "--label",
+                "Sandcastle",
+            ],
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "check": False,
+            "kwargs": {},
+        }
+    ]
+
+
+def test_github_issue_list_raises_clear_error_when_json_list_contains_non_object(
+    monkeypatch,
+) -> None:
+    def fake_run(
+        command,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        check=False,
+    ):
+        return _fake_gh_completed_process(stdout='["not an issue object"]')
+
+    monkeypatch.setattr(
+        github_issues_module.subprocess,
+        "run",
+        fake_run,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Blocked: unable to read open GitHub issues"
+    ) as exc_info:
+        i_github_issue_list()
+
+    message = str(exc_info.value)
+    assert "expected issue objects" in message

@@ -69,13 +69,18 @@ from ai_coder.agent_provider import (
 )
 
 from ai_coder.completion_detector import i_completion_detector_detect
+
+
 from ai_coder.github_issues import (
     GitHubIssue,
+    GitHubIssueReadError,
     i_github_issue_close,
     i_github_issue_from_file,
     i_github_issue_list,
     i_github_issue_select,
 )
+
+
 from ai_coder.orchestrator import OrchestratorResult, i_orchestrator_run
 from ai_coder.prompt_preprocessor import i_prompt_preprocess
 from ai_coder.prompt_resolver import i_prompt_resolve
@@ -259,10 +264,26 @@ def i_ralph_run(
     logger.info("Step 2: Read open GitHub issues.")
     active_display.i_display_message("Step 2: Read open GitHub issues.")
 
-    resolved_issues = _resolve_issue_source(issues, setup_config)
+    try:
+        resolved_issues = _resolve_issue_source(issues, setup_config)
+    except GitHubIssueReadError as error:
+        message_result = str(error)
+        logger.info("GitHub issue reading blocked RALPH: %s", message_result)
+        active_display.i_display_message(message_result)
+
+        return RalphResult(
+            selected_issue=None,
+            prompt="",
+            orchestrator_result=None,
+            completed=False,
+            message=message_result,
+            status=RALPH_STATUS_BLOCKED,
+        )
+
     logger.info(
         f"Resolved {len(resolved_issues)} open GitHub issues to consider for this run."
     )
+
     logger.info(f"Issue numbers: {[issue.number for issue in resolved_issues]}")
     logger.info(f"Issue titles: {[issue.title for issue in resolved_issues]}")
     logger.info(f"Issue labels: {[issue.labels for issue in resolved_issues]}")
