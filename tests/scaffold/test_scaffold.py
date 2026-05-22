@@ -153,6 +153,89 @@ def test_scaffold_create_all_generated_files_use_ai_code_name(
         assert "AI Code" in file_result.path.read_text(encoding="utf-8")
 
 
+def test_scaffold_create_generates_prompt_templates_with_safe_placeholders(
+    tmp_path: Path,
+) -> None:
+    i_scaffold_create(tmp_path)
+
+    prompt_paths = (
+        tmp_path / ".ai-code" / "prompts" / "implementation.md",
+        tmp_path / ".ai-code" / "prompts" / "review.md",
+        tmp_path / ".ai-code" / "prompts" / "merge.md",
+    )
+    prompt_texts = tuple(
+        prompt_path.read_text(encoding="utf-8") for prompt_path in prompt_paths
+    )
+    combined_prompt_text = "\n".join(prompt_texts)
+
+    safe_placeholders = (
+        "{{ISSUE_NUMBER}}",
+        "{{ISSUE_TITLE}}",
+        "{{ISSUE_LABELS}}",
+        "{{ISSUE_BODY}}",
+        "{{BRANCH_NAME}}",
+        "{{WORKTREE_PATH}}",
+        "{{REPOSITORY_CONTEXT}}",
+        "{{COMPLETE_TOKEN}}",
+    )
+
+    for prompt_path, prompt_text in zip(prompt_paths, prompt_texts, strict=True):
+        assert prompt_path.is_file()
+        assert "AI Code" in prompt_text
+
+    for safe_placeholder in safe_placeholders:
+        assert safe_placeholder in combined_prompt_text
+
+
+def test_scaffold_prompt_templates_describe_distinct_workflow_purposes(
+    tmp_path: Path,
+) -> None:
+    i_scaffold_create(tmp_path)
+
+    implementation_text = (
+        tmp_path / ".ai-code" / "prompts" / "implementation.md"
+    ).read_text(encoding="utf-8")
+    review_text = (tmp_path / ".ai-code" / "prompts" / "review.md").read_text(
+        encoding="utf-8"
+    )
+    merge_text = (tmp_path / ".ai-code" / "prompts" / "merge.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "implementation slice" in implementation_text
+    assert "code changes" in implementation_text
+    assert "review guidance" in review_text
+    assert "public seams" in review_text
+    assert "merge notes" in merge_text
+    assert "human review" in merge_text
+
+
+def test_scaffold_prompt_templates_do_not_include_real_secrets_or_command_expansion(
+    tmp_path: Path,
+) -> None:
+    i_scaffold_create(tmp_path)
+
+    prompt_paths = (
+        tmp_path / ".ai-code" / "prompts" / "implementation.md",
+        tmp_path / ".ai-code" / "prompts" / "review.md",
+        tmp_path / ".ai-code" / "prompts" / "merge.md",
+    )
+    combined_prompt_text = "\n".join(
+        prompt_path.read_text(encoding="utf-8") for prompt_path in prompt_paths
+    )
+
+    forbidden_template_text = (
+        "OPENAI_API_KEY=",
+        "ANTHROPIC_API_KEY=",
+        "GH_TOKEN=",
+        "sk-",
+        "!`",
+    )
+
+    for forbidden_text in forbidden_template_text:
+        assert forbidden_text not in combined_prompt_text
+
+
 def test_scaffold_create_generates_dockerfile_template(tmp_path: Path) -> None:
     i_scaffold_create(tmp_path)
 
