@@ -1,3 +1,19 @@
+# AI Code scaffold
+
+This folder contains project-specific AI Code workflow scaffolding.
+
+RALPH is the coding agent inside AI Code. These files are safe text templates for human review before future automation uses them.
+
+## Files
+
+- `prompts/implementation.md` describes how implementation work should be guided.
+- `prompts/review.md` describes how review work should be guided.
+- `prompts/merge.md` describes how merge preparation should be guided.
+- `standards/coding-standards.md` records local coding expectations.
+- `.env.example` documents safe example settings only.
+
+Do not store real secrets in this folder.
+
 # AI Code Template Scaffold Scope
 
 ## Confirmed first scaffold folder name

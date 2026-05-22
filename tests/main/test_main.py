@@ -681,3 +681,214 @@ def test_main_docker_sandbox_cli_override_updates_setup_config_without_real_dock
     assert exit_code == 0
     assert "Selected issue #28: Add Docker sandbox mode selection" in captured.out
     assert main_module.setup_config.sandbox_mode == "docker"
+
+
+def test_main_scaffold_command_creates_ai_code_folder(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+
+    exit_code = main_module.main(
+        [
+            "scaffold",
+            "--repo-path",
+            str(tmp_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert (tmp_path / ".ai-code").is_dir()
+    assert (tmp_path / ".ai-code" / "README.md").is_file()
+    assert "AI Code scaffold folder:" in captured.out
+
+
+def test_main_scaffold_command_does_not_run_ralph(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+
+    def fail_if_ralph_runs(*args, **kwargs):
+        raise AssertionError("RALPH should not run during scaffold command.")
+
+    monkeypatch.setattr(
+        main_module,
+        "i_ralph_run",
+        fail_if_ralph_runs,
+    )
+
+    exit_code = main_module.main(
+        [
+            "scaffold",
+            "--repo-path",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_main_scaffold_command_prints_visible_output(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+
+    readme_path = tmp_path / ".ai-code" / "README.md"
+    readme_path.parent.mkdir(parents=True)
+    readme_path.write_text("keep this custom README", encoding="utf-8")
+
+    exit_code = main_module.main(
+        [
+            "scaffold",
+            "--repo-path",
+            str(tmp_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Skipped existing: .ai-code/README.md" in captured.out
+    assert "Scaffold complete:" in captured.out
+    assert readme_path.read_text(encoding="utf-8") == "keep this custom README"
+
+
+def test_main_scaffold_command_overwrites_when_explicitly_requested(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+
+    readme_path = tmp_path / ".ai-code" / "README.md"
+    readme_path.parent.mkdir(parents=True)
+    readme_path.write_text("old README", encoding="utf-8")
+
+    exit_code = main_module.main(
+        [
+            "scaffold",
+            "--repo-path",
+            str(tmp_path),
+            "--overwrite",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Overwritten: .ai-code/README.md" in captured.out
+    assert "AI Code" in readme_path.read_text(encoding="utf-8")
+    assert "old README" not in readme_path.read_text(encoding="utf-8")
+
+
+def test_main_scaffold_command_returns_1_for_missing_repo_path(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+    missing_repo_path = tmp_path / "missing-scaffold-repo"
+
+    exit_code = main_module.main(
+        [
+            "scaffold",
+            "--repo-path",
+            str(missing_repo_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error: --repo-path does not exist:" in captured.out
+    assert str(missing_repo_path) in captured.out
+
+
+def test_main_scaffold_command_leaves_existing_ai_coder_folder_untouched(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+
+    legacy_folder = tmp_path / ".ai_coder"
+    legacy_prompt_path = legacy_folder / "prompt.md"
+    legacy_folder.mkdir(parents=True)
+    legacy_prompt_path.write_text(
+        "legacy prompt should stay unchanged", encoding="utf-8"
+    )
+
+    exit_code = main_module.main(
+        [
+            "scaffold",
+            "--repo-path",
+            str(tmp_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert (tmp_path / ".ai-code").is_dir()
+    assert legacy_folder.is_dir()
+    assert (
+        legacy_prompt_path.read_text(encoding="utf-8")
+        == "legacy prompt should stay unchanged"
+    )
+    assert "AI Code scaffold folder:" in captured.out
+
+
+def test_main_default_ralph_path_still_runs_after_scaffold_command_added(
+    capsys,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _prepare_main_cli_test_config(monkeypatch, tmp_path)
+    ralph_called = {"value": False}
+
+    def fake_ralph_run(
+        issues=None,
+        max_iterations=3,
+        prompt_path=None,
+        repo_path=None,
+        display=None,
+    ):
+        ralph_called["value"] = True
+        return SimpleNamespace(
+            selected_issue=SimpleNamespace(
+                number=54,
+                title="Add AI Code scaffold folder generator",
+            ),
+            prompt="fake prompt",
+            orchestrator_result=SimpleNamespace(
+                iterations=1,
+                final_output="Done\n<promise>COMPLETE</promise>",
+            ),
+            completed=True,
+            message="RALPH completed the selected issue.",
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "i_ralph_run",
+        fake_ralph_run,
+    )
+
+    exit_code = main_module.main(
+        [
+            "--repo-path",
+            str(tmp_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert ralph_called["value"] is True
+    assert "Selected issue #54: Add AI Code scaffold folder generator" in captured.out
