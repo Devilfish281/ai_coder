@@ -3873,6 +3873,128 @@ def test_ralph_continues_to_repository_context_when_project_setup_passes(
     assert provider.run_count == 1
 
 
+def test_ralph_result_exposes_project_setup_result_on_success(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    expected_project_setup_result = ProjectSetupResult(
+        poetry_project=True,
+        install_ran=True,
+        install_passed=True,
+        baseline_tests_ran=True,
+        baseline_tests_passed=True,
+        blocked=False,
+        install_command=("poetry", "install"),
+        install_stdout="install passed",
+        install_stderr="",
+        install_exit_code=0,
+        baseline_test_command=("poetry", "run", "pytest"),
+        baseline_test_stdout="baseline tests passed",
+        baseline_test_stderr="",
+        baseline_test_exit_code=0,
+        message="Poetry setup passed.",
+    )
+
+    def fake_project_setup_run(worktree_path, sandbox_handle):
+        return expected_project_setup_result
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_project_setup_run",
+        fake_project_setup_run,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=59,
+                title="Expose project setup result on RalphResult",
+                body="RALPH should expose the project setup result.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.project_setup_result == expected_project_setup_result
+    assert result.project_setup_result.baseline_tests_ran is True
+    assert result.project_setup_result.baseline_tests_passed is True
+
+
+def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    blocked_message = (
+        "Blocked: Repository has uncommitted changes. "
+        "RALPH stopped before project setup."
+    )
+
+    def fake_repository_start(repo_path):
+        return RepositoryStartResult(
+            repo_path=tmp_path,
+            ready=False,
+            message=blocked_message,
+            active_branch="main",
+            is_clean=False,
+            status_output=" M README.md",
+            blocked_reason="repository_dirty",
+        )
+
+    def fail_worktree_create(*args, **kwargs):
+        raise AssertionError("i_worktree_create() should not be called.")
+
+    def fail_project_setup_run(*args, **kwargs):
+        raise AssertionError("i_project_setup_run() should not be called.")
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_repository_start",
+        fake_repository_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_create",
+        fail_worktree_create,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_project_setup_run",
+        fail_project_setup_run,
+    )
+
+    provider = MockAgentProvider()
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=59,
+                title="Expose project setup result on RalphResult",
+                body="RALPH should stop before setup on early blocked paths.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_BLOCKED
+    assert result.completed is False
+    assert result.project_setup_result is None
+    assert provider.run_count == 0
+
+
 def _display_messages_as_text(display: SilentDisplay) -> str:
     return "\n".join(display.messages)
 

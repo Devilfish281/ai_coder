@@ -199,6 +199,9 @@ class RalphResult:
     :vartype message: str
     :ivar status: Stable machine-readable status for the workflow result.
     :vartype status: str
+    :ivar project_setup_result: Project setup phase result when project setup
+        ran, or ``None`` when RALPH stopped before project setup.
+    :vartype project_setup_result: ProjectSetupResult | None
     """
 
     selected_issue: GitHubIssue | None
@@ -207,6 +210,7 @@ class RalphResult:
     completed: bool
     message: str
     status: str = RALPH_STATUS_INCOMPLETE
+    project_setup_result: ProjectSetupResult | None = None
     pull_request_draft_result: PullRequestDraftResult | None = None
     issue_close_result: GitHubIssueCloseResult | None = None
 
@@ -467,6 +471,7 @@ def i_ralph_run(
             completed=False,
             message=message_result,
             status=RALPH_STATUS_BLOCKED,
+            project_setup_result=project_setup_result,
         )
     #############################################
     # 5b. Discover prompt-safe repository context.
@@ -825,6 +830,7 @@ def i_ralph_run(
         completed=result_status == RALPH_STATUS_COMPLETE,
         message=message_result,
         status=result_status,
+        project_setup_result=project_setup_result,
         pull_request_draft_result=pull_request_draft_result,
         issue_close_result=close_result,
     )
