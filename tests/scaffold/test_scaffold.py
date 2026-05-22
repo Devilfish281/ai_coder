@@ -5,10 +5,12 @@ from pathlib import Path
 
 from ai_coder.display import SilentDisplay, i_display_scaffold_result
 from ai_coder.scaffold import i_scaffold_create
+from ai_coder.setup_config import DEFAULT_DOCKER_IMAGE_NAME
 
 EXPECTED_SCAFFOLD_FILES = (
     ".ai-code/README.md",
     ".ai-code/.env.example",
+    ".ai-code/Dockerfile",
     ".ai-code/prompts/implementation.md",
     ".ai-code/prompts/review.md",
     ".ai-code/prompts/merge.md",
@@ -151,6 +153,75 @@ def test_scaffold_create_all_generated_files_use_ai_code_name(
         assert "AI Code" in file_result.path.read_text(encoding="utf-8")
 
 
+def test_scaffold_create_generates_dockerfile_template(tmp_path: Path) -> None:
+    i_scaffold_create(tmp_path)
+
+    dockerfile_path = tmp_path / ".ai-code" / "Dockerfile"
+    dockerfile_text = dockerfile_path.read_text(encoding="utf-8")
+
+    assert dockerfile_path.is_file()
+    assert "AI Code" in dockerfile_text
+    assert "RALPH" in dockerfile_text
+    assert "/workspace" in dockerfile_text
+    assert DEFAULT_DOCKER_IMAGE_NAME in dockerfile_text
+
+
+def test_scaffold_env_example_documents_docker_runtime_defaults(  #  Changed Code
+    tmp_path: Path,
+) -> None:  #  Changed Code
+    i_scaffold_create(tmp_path)
+
+    env_example_path = tmp_path / ".ai-code" / ".env.example"
+    env_example_text = env_example_path.read_text(encoding="utf-8")
+
+    assert env_example_path.is_file()
+    assert "AI Code" in env_example_text
+    assert "RALPH" in env_example_text
+    assert f"RALPH_DOCKER_IMAGE_NAME={DEFAULT_DOCKER_IMAGE_NAME}" in env_example_text
+    assert "RALPH_SANDBOX_MODE=docker" in env_example_text
+    assert "RALPH_DOCKER_ENV_ALLOWLIST=PYTHONUNBUFFERED" in env_example_text
+    assert "RALPH_DOCKER_SECRET_ENV_ALLOWLIST=" in env_example_text
+    assert "Do not put real secrets in this example file." in env_example_text
+
+
+def test_scaffold_templates_do_not_include_real_secrets(tmp_path: Path) -> None:
+    i_scaffold_create(tmp_path)
+
+    dockerfile_text = (tmp_path / ".ai-code" / "Dockerfile").read_text(encoding="utf-8")
+    env_example_text = (tmp_path / ".ai-code" / ".env.example").read_text(
+        encoding="utf-8"
+    )
+    template_text = f"{dockerfile_text}\n{env_example_text}"
+
+    forbidden_secret_examples = (
+        "OPENAI_API_KEY=",
+        "ANTHROPIC_API_KEY=",
+        "GH_TOKEN=",
+        "sk-",
+    )
+
+    for forbidden_secret_example in forbidden_secret_examples:
+        assert forbidden_secret_example not in template_text
+
+
+def test_scaffold_create_preserves_existing_dockerfile_by_default(
+    tmp_path: Path,
+) -> None:
+    dockerfile_path = tmp_path / ".ai-code" / "Dockerfile"
+    dockerfile_path.parent.mkdir(parents=True)
+    dockerfile_path.write_text("custom Dockerfile content", encoding="utf-8")
+
+    result = i_scaffold_create(tmp_path)
+
+    dockerfile_result = _find_file_result(result.files, ".ai-code/Dockerfile")
+
+    assert dockerfile_path.read_text(encoding="utf-8") == "custom Dockerfile content"
+    assert dockerfile_result.action == "skipped_existing"
+
+
+###############################################################################
+# Helper function to find a specific file result by relative path
+###############################################################################
 def _find_file_result(file_results: tuple[object, ...], relative_path: str) -> object:
     for file_result in file_results:
         if file_result.relative_path.as_posix() == relative_path:

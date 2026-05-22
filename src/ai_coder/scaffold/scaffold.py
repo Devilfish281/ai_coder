@@ -136,6 +136,10 @@ def _default_scaffold_files() -> tuple[_ScaffoldTemplate, ...]:
             content=_env_example_template(),
         ),
         _ScaffoldTemplate(
+            relative_path=Path(SCAFFOLD_FOLDER_NAME) / "Dockerfile",
+            content=_dockerfile_template(),
+        ),
+        _ScaffoldTemplate(
             relative_path=Path(SCAFFOLD_FOLDER_NAME) / "prompts" / "implementation.md",
             content=_implementation_prompt_template(),
         ),
@@ -178,11 +182,52 @@ Do not store real secrets in this folder.
 def _env_example_template() -> str:
     return """# AI Code example environment values
 
+# Safe starter values for local AI Code scaffold files.
+# RALPH is the single-issue coding agent inside AI Code.
+# Copy this file to .env only after reviewing each value.
+# Do not put real secrets in this example file.
+
 AI_CODE_PROJECT_NAME="AI Code"
 AI_CODE_WORKFLOW_NAME="single-issue"
 AI_CODE_AGENT_NAME="RALPH"
 
-# Keep real secrets out of scaffold files.
+# Docker sandbox template guidance.
+# This image name should match setup_config.py DEFAULT_DOCKER_IMAGE_NAME.
+RALPH_SANDBOX_MODE=docker
+RALPH_DOCKER_IMAGE_NAME=ai-code-ralph-test-runtime:latest
+RALPH_DOCKER_ENV_ALLOWLIST=PYTHONUNBUFFERED
+
+# Keep this empty until a later approved workflow explicitly needs secrets.
+# Real secret values belong in your private .env file, not in .env.example.
+RALPH_DOCKER_SECRET_ENV_ALLOWLIST=
+
+"""
+
+
+def _dockerfile_template() -> str:
+    return """# AI Code RALPH Docker runtime template
+
+# Expected image tag:
+# ai-code-ralph-test-runtime:latest
+#
+# Manual build command:
+# docker build -f .ai-code/Dockerfile -t ai-code-ralph-test-runtime:latest .
+#
+# This starter image is for the AI Code Docker bind-mount runtime.
+# RALPH should run project commands with the repository mounted at /workspace.
+# Do not put real secrets in this Dockerfile.
+
+FROM python:3.12-slim
+
+LABEL org.opencontainers.image.title="AI Code RALPH runtime"
+LABEL org.opencontainers.image.description="Starter runtime image for AI Code scaffold workflows"
+LABEL ai-code.image.tag="ai-code-ralph-test-runtime:latest"
+
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /workspace
+
+CMD ["python", "--version"]
 """
 
 

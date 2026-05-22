@@ -273,3 +273,38 @@ Automatic pull request creation remains disabled by default.
 Automatic issue closing remains disabled by default.
 
 When RALPH eventually creates PR bodies, it should use `Refs #<issue_number>` when the PR should only link to the issue. It should use `close #<issue_number>` only when human approval confirms that the issue should close after the PR is merged.
+
+## scaffold commands
+
+Run these after the code above is saved:
+
+```powershell
+poetry run pytest
+```
+
+Then test scaffold creation in a safe temporary folder:
+
+```powershell
+mkdir temp_scaffold_check
+ai-coder scaffold --repo-path temp_scaffold_check
+```
+
+Check these files exist:
+
+```powershell
+dir temp_scaffold_check\.ai-code
+type temp_scaffold_check\.ai-code\Dockerfile
+type temp_scaffold_check\.ai-code\.env.example
+```
+
+Run scaffold a second time to confirm existing files are skipped:
+
+```powershell
+ai-coder scaffold --repo-path temp_scaffold_check
+```
+
+Run scaffold with overwrite to confirm overwrite only happens by explicit choice:
+
+```powershell
+ai-coder scaffold --repo-path temp_scaffold_check --overwrite
+```
