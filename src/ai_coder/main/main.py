@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +15,7 @@ from ai_coder.github_issues import (
     i_github_issue_from_provided,
 )
 
-
+from ai_coder.scaffold import i_scaffold_create
 from ai_coder.ralph import i_ralph_run
 
 from ai_coder.setup_config import c_setup_config
@@ -47,6 +48,14 @@ def main(
 ) -> int:
     use_logger_t = argv is None
     _write_info("Starting ai-coder...", use_logger=use_logger_t)
+
+    argv_for_parse = list(sys.argv[1:] if argv is None else argv)
+
+    if argv_for_parse and argv_for_parse[0] == "scaffold":
+        return _run_scaffold_command(
+            argv_for_parse[1:],
+            use_logger=use_logger_t,
+        )
 
     # try:
     #     setup_config.validate_initialization()
@@ -123,7 +132,7 @@ def main(
     )
 
     # Parse the command-line arguments
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv_for_parse)
 
     cli_overrides = _cli_overrides_from_args(args)
 
@@ -274,6 +283,64 @@ def main(
         _write_info(result.orchestrator_result.final_output, use_logger=use_logger_t)
 
     return 0 if result.completed else 1
+
+
+###############################################################################
+# Helper Functions
+###############################################################################
+def _run_scaffold_command(
+    argv: Sequence[str],
+    *,
+    use_logger: bool,
+) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ai-coder scaffold",
+        description="Create the AI Code .ai-code scaffold folder.",
+    )
+    parser.add_argument(
+        "--repo-path",
+        default=setup_config.repo_path,
+        help="Path to the local repository where .ai-code should be created.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing scaffold files explicitly.",
+    )
+
+    args = parser.parse_args(argv)
+    repo_path = Path(args.repo_path)
+
+    if not repo_path.exists():
+        _write_error(
+            f"Error: --repo-path does not exist: {repo_path}",
+            use_logger=use_logger,
+        )
+        return 1
+
+    if not repo_path.is_dir():
+        _write_error(
+            f"Error: --repo-path is not a directory: {repo_path}",
+            use_logger=use_logger,
+        )
+        return 1
+
+    try:
+        i_scaffold_create(
+            repo_path,
+            overwrite_existing=bool(args.overwrite),
+            display=ConsoleDisplay(
+                secret_values=setup_config.i_setup_config_secret_values(),
+            ),
+        )
+    except OSError as error:
+        _write_error(
+            f"Scaffold error: {error}",
+            use_logger=use_logger,
+        )
+        return 1
+
+    return 0
 
 
 def _cli_overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:

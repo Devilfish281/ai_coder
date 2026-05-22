@@ -179,6 +179,27 @@ def i_display_cleanup_result(
         display.i_display_message(message)
 
 
+def i_display_scaffold_result(
+    display: DisplayProtocol,
+    scaffold_result: object,
+) -> None:
+    root_path = str(getattr(scaffold_result, "root_path", "")).strip()
+
+    if root_path:
+        display.i_display_message(f"AI Code scaffold folder: {root_path}")
+
+    for file_result in getattr(scaffold_result, "files", ()):
+        file_message = str(getattr(file_result, "message", "")).strip()
+
+        if file_message:
+            display.i_display_message(file_message)
+
+    message = str(getattr(scaffold_result, "message", "")).strip()
+
+    if message:
+        display.i_display_message(message)
+
+
 def i_display_pull_request_draft(
     display: DisplayProtocol,
     pull_request_draft_result: object,
