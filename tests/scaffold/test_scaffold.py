@@ -40,6 +40,29 @@ def test_scaffold_create_creates_ai_code_folder_and_files(tmp_path: Path) -> Non
     assert {file_result.action for file_result in result.files} == {"created"}
 
 
+def test_scaffold_readme_documents_safe_extension_points(tmp_path: Path) -> None:
+    i_scaffold_create(tmp_path)
+
+    scaffold_readme_path = tmp_path / ".ai-code" / "README.md"
+    scaffold_readme_text = scaffold_readme_path.read_text(encoding="utf-8")
+
+    expected_phrases = (
+        "AI Code scaffold",
+        "prompts/implementation.md",
+        "prompts/review.md",
+        "prompts/merge.md",
+        "standards/coding-standards.md",
+        "extension points",
+        "safe extension",
+        "Do not store real secrets",
+        "Existing files are skipped",
+        "overwrite",
+    )
+
+    for expected_phrase in expected_phrases:
+        assert expected_phrase in scaffold_readme_text
+
+
 def test_scaffold_create_skips_existing_files_by_default(tmp_path: Path) -> None:
     readme_path = tmp_path / ".ai-code" / "README.md"
     readme_path.parent.mkdir(parents=True)

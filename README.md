@@ -635,6 +635,309 @@ Print readable result
 
 Release 1 focuses on proving this end-to-end path locally. Docker, Codex, automatic pull requests, automatic issue closing, and multi-agent workflows are later-phase or disabled placeholder behavior unless current tests prove otherwise.
 
+## Provider and Sandbox Extension Guide
+
+AI Code keeps agent execution and command execution behind small public seams. This lets RALPH stay simple while the project grows from the Release 1 local tracer bullet into Docker, Codex, and future adapters.
+
+Current code and tests are the source of truth. This section documents extension points; it does not mean every future provider, cloud sandbox, pull request workflow, or issue-close workflow is implemented.
+
+### Sandbox Seam
+
+RALPH should not call `subprocess.run()` directly from the high-level workflow.
+
+RALPH starts a sandbox through:
+
+```text
+i_sandbox_start()
+```
+
+RALPH runs commands through the sandbox handle seam:
+
+```text
+i_sandboxhandle_run()
+```
+
+The sandbox adapter returns a normalized `CommandResult`. That result gives callers a consistent shape for command output:
+
+- `stdout`
+- `stderr`
+- `exit_code`
+- success or failure state
+
+This keeps local execution, Docker execution, and future sandbox execution details out of RALPH and the orchestrator.
+
+The important idea is:
+
+```text
+RALPH asks for command execution.
+The selected sandbox provider decides how command execution happens.
+RALPH reads the normalized result.
+```
+
+### Local Sandbox
+
+The local sandbox is the default Release 1 path.
+
+Use it for the simple local tracer bullet:
+
+```powershell
+poetry run ai-coder --repo-path . --agent mock --sandbox local --dry-run
+```
+
+Local sandbox mode is useful because it proves the workflow before Docker, cloud sandboxes, or long-running containers are added.
+
+### Docker Bind-Mount Sandbox
+
+Docker bind-mount mode is the first Docker sandbox path.
+
+In Docker bind-mount mode:
+
+1. RALPH creates or receives a host Git worktree path.
+2. `DockerSandboxProvider` mounts that host worktree into the container.
+3. The container sees the mounted worktree at `/workspace`.
+4. Commands run with `/workspace` as the container working directory.
+5. File edits made inside Docker appear in the host worktree because the worktree is bind-mounted.
+6. The host can inspect Git state after the Docker command finishes.
+7. Dirty or failed worktrees are preserved for human review.
+
+The default Docker image is:
+
+```text
+ai-code-ralph-test-runtime:latest
+```
+
+Docker image validation belongs in the Docker adapter layer. RALPH should not hard-code Docker image checks into the high-level workflow.
+
+AI Code does not auto-build the Docker image in this slice. Build the image manually when you intentionally test Docker mode.
+
+Windows path conversion and worktree `.git` handling should stay in:
+
+```text
+src/ai_coder/sandbox_provider/mount_utils.py
+```
+
+That keeps Windows mount behavior local to the sandbox provider layer instead of spreading it across RALPH, the orchestrator, or agent providers.
+
+### Docker Environment Allowlists and Redaction
+
+AI Code should not pass the full host environment into Docker.
+
+Normal Docker environment variable names come from:
+
+```text
+docker_env_allowlist
+```
+
+Secret-like Docker environment variable names come from:
+
+```text
+docker_secret_env_allowlist
+```
+
+Provider-specific environment names can flow through:
+
+```text
+provider_env_allowlist
+provider_secret_env_allowlist
+```
+
+The default normal Docker env allowlist includes:
+
+```text
+PYTHONUNBUFFERED
+```
+
+`PYTHONUNBUFFERED` may default to `1`.
+
+The default secret Docker env allowlist is empty.
+
+Real API keys such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GH_TOKEN` should not be included by default during the early Docker tracer-bullet phase.
+
+Missing normal environment variables are skipped, except for `PYTHONUNBUFFERED`.
+
+Missing configured secret environment variables should block with a clear error when the Docker command is built.
+
+Docker command redaction belongs in:
+
+```text
+i_dockercommand_redact()
+```
+
+`i_dockercommand_redact()` should receive the command and configured secret env names as inputs. It should not import `setup_config.py`.
+
+Redaction only hides configured secret env values. Normal environment values may be shown normally.
+
+The redaction utility should support these Docker env argument forms:
+
+```text
+-e NAME=value
+--env NAME=value
+--env=NAME=value
+```
+
+### CodexProvider
+
+`CodexProvider` is the first real agent provider path.
+
+RALPH should choose providers through:
+
+```text
+i_agent_provider_create()
+```
+
+For Codex, RALPH should use:
+
+```text
+i_agent_provider_create("codex", ...)
+```
+
+Command construction belongs inside:
+
+```text
+CodexCommandContract
+CodexProvider
+```
+
+RALPH should not hard-code Codex CLI details.
+
+`CodexProvider` uses non-interactive Codex execution with:
+
+```text
+codex exec
+```
+
+Prompt text should be passed through stdin instead of being placed directly into a large command argument. This keeps long GitHub issue bodies, Windows paths, quotes, and shell-like characters inert.
+
+The current command shape includes:
+
+```text
+codex exec
+--cd <worktree-path>
+--sandbox workspace-write
+--color never
+--json
+--output-last-message <path>
+-
+```
+
+`CodexProvider` should prefer structured JSONL output when available.
+
+When structured output is unavailable, plain stdout fallback keeps useful text output visible.
+
+Normalized provider events may include:
+
+- text events
+- tool call events
+- result events
+- error events
+- session events
+
+The orchestrator should consume normalized provider results instead of depending on one provider's raw output format.
+
+### Adding a Future Agent Provider
+
+To add a future agent provider, keep the provider behind the agent provider seam.
+
+Use this checklist:
+
+1. Add a provider class that satisfies `AgentProvider`.
+2. Implement `i_agent_provider_run(prompt: str) -> AgentResponse`.
+3. Keep provider-specific command construction inside the provider.
+4. Prefer stdin or a safe temporary file for large prompt text.
+5. Treat issue title, issue body, labels, and assignment data as inert text.
+6. Return normalized events when the provider supports structured output.
+7. Add the provider name to config validation only when the provider is ready.
+8. Add the provider to `i_agent_provider_create()`.
+9. Add tests with fake sandbox handles.
+10. Do not add new secrets to default allowlists.
+
+Future agent provider examples may include Claude, OpenCode, or another local command adapter, but they are future extension points until tests prove them.
+
+### Adding a Future Sandbox Provider
+
+To add a future sandbox provider, keep command execution behind the sandbox seam.
+
+Use this checklist:
+
+1. Add a provider and handle pair that satisfies the sandbox seam.
+2. Start the provider through `i_sandbox_start()`.
+3. Run commands through `i_sandboxhandle_run()`.
+4. Return a normalized `CommandResult`.
+5. Keep provider-specific details inside the adapter.
+6. Do not leak Docker, Podman, cloud, or remote execution details into RALPH or the orchestrator.
+7. Use explicit environment allowlists.
+8. Redact configured secret values.
+9. Preserve worktree safety.
+10. Add tests for start behavior, command execution, failure behavior, and environment handling.
+
+Only add `sync_in` or `sync_out` behavior for isolated or cloud sandboxes that need file copy. Local mode and Docker bind-mount mode work directly in the worktree path and do not need separate file syncing.
+
+### `.ai-code` Scaffold Extension Points
+
+The command:
+
+```powershell
+poetry run ai-coder scaffold --repo-path .
+```
+
+creates project-specific automation files under:
+
+```text
+.ai-code/
+```
+
+Current scaffold files may include:
+
+- `.ai-code/README.md`
+- `.ai-code/.env.example`
+- `.ai-code/Dockerfile`
+- `.ai-code/prompts/implementation.md`
+- `.ai-code/prompts/review.md`
+- `.ai-code/prompts/merge.md`
+- `.ai-code/standards/coding-standards.md`
+
+Scaffold generation belongs behind:
+
+```text
+i_scaffold_create()
+```
+
+The scaffold file list belongs in:
+
+```text
+_default_scaffold_files()
+```
+
+Existing files are skipped unless overwrite is explicitly requested.
+
+Use overwrite only when you intentionally want to replace existing scaffold files:
+
+```powershell
+poetry run ai-coder scaffold --repo-path . --overwrite
+```
+
+Generated scaffold files must not contain real secrets.
+
+New scaffold templates should be tested in:
+
+```text
+tests/scaffold/test_scaffold.py
+```
+
+### Current Scope Versus Future Work
+
+The current implementation supports local tracer-bullet behavior and tested optional extension paths.
+
+The following are future extension points, not implemented production behavior:
+
+- automatic pull request creation is not implemented as automatic Release 1 behavior,
+- automatic GitHub issue closing is not implemented as automatic Release 1 behavior,
+- cloud sandbox providers are not implemented,
+- multi-agent workflows are not implemented,
+- long-running Docker container orchestration is not implemented.
+
+Keep documentation tied to what current code and tests prove. Describe unfinished behavior as a future extension point, not as a completed feature.
+
 ## Main Modules
 
 - **`setup_config.py`** — Final runtime source of truth for validated configuration values.
