@@ -3873,6 +3873,49 @@ def test_ralph_continues_to_repository_context_when_project_setup_passes(
     assert provider.run_count == 1
 
 
+def test_ralph_result_exposes_phase_results_on_success(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    provider = MockAgentProvider(responses=[f"Done\n{COMPLETE_TOKEN}"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=63,
+                title="Document phase result fields and early blocked None behavior",
+                body="RALPH should expose all phase results on successful runs.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.project_setup_result is not None
+    assert result.project_setup_result.baseline_tests_ran is True
+    assert result.project_setup_result.baseline_tests_passed is True
+    assert result.test_result is not None
+    assert result.test_result.passed is True
+    assert result.sync_result is not None
+    assert result.sync_result.committed is True
+    assert result.sync_result.commit_hash == "test-commit-hash"
+    assert result.cleanup_result is not None
+    assert result.cleanup_result.removed is True
+    assert result.cleanup_result.preserved is False
+    assert result.cleanup_result.reason == "removed_clean_worktree"
+    assert provider.run_count == 1
+
+
 def test_ralph_result_exposes_project_setup_result_on_success(
     monkeypatch,
     tmp_path,
@@ -4381,7 +4424,7 @@ def test_ralph_result_exposes_sync_result_when_sync_or_commit_fails(
     assert "Commit failed" in result.message
 
 
-def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
+def test_ralph_result_leaves_unreached_phase_results_none_when_blocked_early(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -4404,8 +4447,20 @@ def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
     def fail_worktree_create(*args, **kwargs):
         raise AssertionError("i_worktree_create() should not be called.")
 
+    def fail_sandbox_start(*args, **kwargs):
+        raise AssertionError("i_sandbox_start() should not be called.")
+
     def fail_project_setup_run(*args, **kwargs):
         raise AssertionError("i_project_setup_run() should not be called.")
+
+    def fail_test_runner_run(*args, **kwargs):
+        raise AssertionError("i_test_runner_run() should not be called.")
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError("i_sync_out_merge() should not be called.")
+
+    def fail_worktree_cleanup(*args, **kwargs):
+        raise AssertionError("i_worktree_cleanup() should not be called.")
 
     monkeypatch.setattr(
         ralph_module,
@@ -4419,8 +4474,28 @@ def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
     )
     monkeypatch.setattr(
         ralph_module,
+        "i_sandbox_start",
+        fail_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
         "i_project_setup_run",
         fail_project_setup_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fail_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fail_worktree_cleanup,
     )
 
     provider = MockAgentProvider()
@@ -4428,9 +4503,9 @@ def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
     result = i_ralph_run(
         issues=[
             GitHubIssue(
-                number=59,
-                title="Expose project setup result on RalphResult",
-                body="RALPH should stop before setup on early blocked paths.",
+                number=63,
+                title="Document phase result fields and early blocked None behavior",
+                body="RALPH should stop before phase results on early blocked paths.",
                 labels=("tracer bullet",),
             )
         ],
@@ -4440,6 +4515,9 @@ def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
 
     assert result.status == RALPH_STATUS_BLOCKED
     assert result.completed is False
+    assert result.selected_issue is None
+    assert result.prompt == ""
+    assert result.orchestrator_result is None
     assert result.project_setup_result is None
     assert result.test_result is None
     assert result.sync_result is None
