@@ -202,6 +202,9 @@ class RalphResult:
     :ivar project_setup_result: Project setup phase result when project setup
         ran, or ``None`` when RALPH stopped before project setup.
     :vartype project_setup_result: ProjectSetupResult | None
+    :ivar test_result: Final test phase result when final tests ran, or
+        ``None`` when RALPH stopped before the final test phase.
+    :vartype test_result: TestRunResult | None
     """
 
     selected_issue: GitHubIssue | None
@@ -211,6 +214,7 @@ class RalphResult:
     message: str
     status: str = RALPH_STATUS_INCOMPLETE
     project_setup_result: ProjectSetupResult | None = None
+    test_result: TestRunResult | None = None  #  Added Code
     pull_request_draft_result: PullRequestDraftResult | None = None
     issue_close_result: GitHubIssueCloseResult | None = None
 
@@ -831,6 +835,7 @@ def i_ralph_run(
         message=message_result,
         status=result_status,
         project_setup_result=project_setup_result,
+        test_result=test_result,  #  Added Code
         pull_request_draft_result=pull_request_draft_result,
         issue_close_result=close_result,
     )
