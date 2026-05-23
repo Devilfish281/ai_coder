@@ -209,6 +209,9 @@ class RalphResult:
         or ``None`` when RALPH stopped before sync/commit or skipped
         sync/commit because completion/tests did not allow it.
     :vartype sync_result: SyncMergeResult | None
+    :ivar cleanup_result: Cleanup/preservation phase result when cleanup ran,
+        or ``None`` when RALPH stopped before any cleanup phase.
+    :vartype cleanup_result: WorktreeCleanupResult | None
     """
 
     selected_issue: GitHubIssue | None
@@ -220,6 +223,7 @@ class RalphResult:
     project_setup_result: ProjectSetupResult | None = None
     test_result: TestRunResult | None = None
     sync_result: SyncMergeResult | None = None
+    cleanup_result: WorktreeCleanupResult | None = None
     pull_request_draft_result: PullRequestDraftResult | None = None
     issue_close_result: GitHubIssueCloseResult | None = None
 
@@ -434,6 +438,7 @@ def i_ralph_run(
             completed=False,
             message=message_result,
             status="blocked",
+            cleanup_result=cleanup_result,
         )
 
     #############################################
@@ -481,7 +486,9 @@ def i_ralph_run(
             message=message_result,
             status=RALPH_STATUS_BLOCKED,
             project_setup_result=project_setup_result,
+            cleanup_result=cleanup_result,
         )
+
     #############################################
     # 5b. Discover prompt-safe repository context.
     logger.info("Step 5b: Discover prompt-safe repository context.")
@@ -837,6 +844,9 @@ def i_ralph_run(
     logger.info(f"Completion detected: {completion_result.completed}")
     logger.info(f"Message: {message_result}")
 
+    ###########################################################################
+    # Final normal return
+    ###########################################################################
     return RalphResult(
         selected_issue=selected_issue,
         prompt=prompt,
@@ -847,6 +857,7 @@ def i_ralph_run(
         project_setup_result=project_setup_result,
         test_result=test_result,
         sync_result=sync_result,
+        cleanup_result=cleanup_result,
         pull_request_draft_result=pull_request_draft_result,
         issue_close_result=close_result,
     )

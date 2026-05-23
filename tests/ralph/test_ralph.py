@@ -4073,6 +4073,66 @@ def test_ralph_result_exposes_sync_result_on_success(
     assert result.sync_result.commit_hash == "test-commit-hash"
 
 
+def test_ralph_result_exposes_cleanup_result_on_success(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+    expected_cleanup_result = WorktreeCleanupResult(
+        worktree_path=worktree_path,
+        removed=True,
+        preserved=False,
+        reason="removed_clean_worktree",
+        message=f"Removed clean worktree: {worktree_path}",
+    )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        assert repo_path == tmp_path
+        assert worktree_path == expected_cleanup_result.worktree_path
+        assert completed is True
+        assert has_uncommitted_changes is None
+        return expected_cleanup_result
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=62,
+                title="Expose cleanup result on RalphResult",
+                body="RALPH should expose cleanup result details.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.cleanup_result == expected_cleanup_result
+    assert result.cleanup_result.removed is True
+    assert result.cleanup_result.preserved is False
+    assert result.cleanup_result.reason == "removed_clean_worktree"
+    assert "Removed clean worktree" in result.cleanup_result.message
+
+
 def test_ralph_result_leaves_sync_result_none_when_final_tests_fail(
     monkeypatch,
     tmp_path,
@@ -4149,6 +4209,93 @@ def test_ralph_result_leaves_sync_result_none_when_final_tests_fail(
     assert result.test_result is not None
     assert result.test_result.passed is False
     assert result.sync_result is None
+
+
+def test_ralph_result_exposes_cleanup_result_when_final_tests_fail(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    expected_test_result = TestRunResult(
+        passed=False,
+        command=("poetry", "run", "pytest"),
+        message="Final Step 9 tests failed through the sandbox seam.",
+        stdout="test stdout",
+        stderr="pytest failed",
+        exit_code=1,
+    )
+    expected_cleanup_result = WorktreeCleanupResult(
+        worktree_path=worktree_path,
+        removed=False,
+        preserved=True,
+        reason="run_incomplete",
+        message=f"Preserved worktree: {worktree_path}. Tests failed.",
+    )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return expected_test_result
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError("i_sync_out_merge() should not be called when tests fail.")
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        assert repo_path == tmp_path
+        assert worktree_path == expected_cleanup_result.worktree_path
+        assert completed is False
+        return expected_cleanup_result
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=62,
+                title="Expose cleanup result on RalphResult",
+                body="RALPH should expose cleanup result details when tests fail.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_FAILED
+    assert result.completed is False
+    assert result.test_result == expected_test_result
+    assert result.test_result is not None
+    assert result.sync_result is None
+    assert result.cleanup_result == expected_cleanup_result
+    assert result.cleanup_result.preserved is True
+    assert result.cleanup_result.removed is False
+    assert result.cleanup_result.reason == "run_incomplete"
+    assert "Preserved worktree" in result.cleanup_result.message
 
 
 def test_ralph_result_exposes_sync_result_when_sync_or_commit_fails(
@@ -4295,7 +4442,8 @@ def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
     assert result.completed is False
     assert result.project_setup_result is None
     assert result.test_result is None
-    assert result.sync_result is None  #  Added Code
+    assert result.sync_result is None
+    assert result.cleanup_result is None
     assert provider.run_count == 0
 
 
@@ -4692,6 +4840,10 @@ def test_ralph_blocks_and_preserves_worktree_when_docker_sandbox_start_fails(
     assert result.selected_issue.number == 28
     assert result.completed is False
     assert result.status == RALPH_STATUS_BLOCKED
+    assert result.cleanup_result is not None
+    assert result.cleanup_result.preserved is True
+    assert result.cleanup_result.removed is False
+    assert result.cleanup_result.reason == "run_incomplete"
     assert result.prompt == ""
     assert result.orchestrator_result is None
     assert docker_failure_message in result.message
