@@ -3988,6 +3988,252 @@ def test_ralph_result_exposes_test_result_on_success(
     )
 
 
+def test_ralph_result_exposes_sync_result_on_success(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+
+    expected_test_result = TestRunResult(
+        passed=True,
+        command=("poetry", "run", "pytest"),
+        message="Final Step 9 tests passed before sync.",
+        stdout="final tests passed",
+        stderr="",
+        exit_code=0,
+    )
+
+    expected_sync_result = SyncMergeResult(
+        merged=True,
+        committed=True,
+        failed=False,
+        commit_hash="test-commit-hash",
+        worktree_path=worktree_path,
+        has_changes=True,
+        has_uncommitted_changes=False,
+        message="Commit created: test-commit-hash.",
+    )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return expected_test_result
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        assert completed is True
+        assert worktree_path == expected_sync_result.worktree_path
+        assert issue_number == 61
+        assert issue_title == "Expose sync result on RalphResult"
+
+        return expected_sync_result
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=61,
+                title="Expose sync result on RalphResult",
+                body="RALPH should expose the sync result.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.test_result == expected_test_result
+    assert result.test_result.passed is True
+    assert result.sync_result == expected_sync_result
+    assert result.sync_result.committed is True
+    assert result.sync_result.commit_hash == "test-commit-hash"
+
+
+def test_ralph_result_leaves_sync_result_none_when_final_tests_fail(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    expected_test_result = TestRunResult(
+        passed=False,
+        command=("poetry", "run", "pytest"),
+        message="Final Step 9 tests failed through the sandbox seam.",
+        stdout="test stdout",
+        stderr="pytest failed",
+        exit_code=1,
+    )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ):
+        return expected_test_result
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError("i_sync_out_merge() should not be called when tests fail.")
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. Tests failed.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=61,
+                title="Expose sync result on RalphResult",
+                body="RALPH should leave sync_result as None when final tests fail.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_FAILED
+    assert result.completed is False
+    assert result.test_result == expected_test_result
+    assert result.test_result is not None
+    assert result.test_result.passed is False
+    assert result.sync_result is None
+
+
+def test_ralph_result_exposes_sync_result_when_sync_or_commit_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+
+    expected_sync_result = SyncMergeResult(
+        merged=False,
+        committed=False,
+        failed=True,
+        worktree_path=worktree_path,
+        has_changes=True,
+        message="Commit failed. fatal: unable to create commit.",
+        stderr="fatal: unable to create commit.",
+        exit_code=128,
+    )
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ):
+        assert completed is True
+        assert worktree_path == expected_sync_result.worktree_path
+        assert issue_number == 61
+        assert issue_title == "Expose sync result on RalphResult"
+
+        return expected_sync_result
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ):
+        return WorktreeCleanupResult(
+            worktree_path=worktree_path,
+            removed=False,
+            preserved=True,
+            reason="run_incomplete",
+            message=f"Preserved worktree: {worktree_path}. Commit failed.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    provider = MockAgentProvider(responses=["Done\n<promise>COMPLETE</promise>"])
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=61,
+                title="Expose sync result on RalphResult",
+                body="RALPH should expose sync failure details.",
+                labels=("tracer bullet",),
+            )
+        ],
+        agent_provider=provider,
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_FAILED
+    assert result.completed is False
+    assert result.sync_result == expected_sync_result
+    assert result.sync_result.failed is True
+    assert "Commit failed" in result.sync_result.message
+    assert "Commit failed" in result.message
+
+
 def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
     monkeypatch,
     tmp_path,
@@ -4049,6 +4295,7 @@ def test_ralph_result_leaves_project_setup_result_none_when_blocked_early(
     assert result.completed is False
     assert result.project_setup_result is None
     assert result.test_result is None
+    assert result.sync_result is None  #  Added Code
     assert provider.run_count == 0
 
 

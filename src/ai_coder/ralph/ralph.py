@@ -205,6 +205,10 @@ class RalphResult:
     :ivar test_result: Final test phase result when final tests ran, or
         ``None`` when RALPH stopped before the final test phase.
     :vartype test_result: TestRunResult | None
+    :ivar sync_result: Sync/commit phase result when Step 10 actually ran,
+        or ``None`` when RALPH stopped before sync/commit or skipped
+        sync/commit because completion/tests did not allow it.
+    :vartype sync_result: SyncMergeResult | None
     """
 
     selected_issue: GitHubIssue | None
@@ -214,7 +218,8 @@ class RalphResult:
     message: str
     status: str = RALPH_STATUS_INCOMPLETE
     project_setup_result: ProjectSetupResult | None = None
-    test_result: TestRunResult | None = None  #  Added Code
+    test_result: TestRunResult | None = None
+    sync_result: SyncMergeResult | None = None
     pull_request_draft_result: PullRequestDraftResult | None = None
     issue_close_result: GitHubIssueCloseResult | None = None
 
@@ -639,6 +644,7 @@ def i_ralph_run(
         stderr=test_result.stderr,
         exit_code=test_result.exit_code,
     )
+
     #############################################
     # 10. Sync or merge the finished work back to the host repo.
     logger.info("Step 10: Sync or merge the finished work back to the host repo.")
@@ -653,6 +659,8 @@ def i_ralph_run(
         and not getattr(test_result, "blocked", False)
     )
 
+    sync_result: SyncMergeResult | None = None
+
     if should_commit:
         sync_result = i_sync_out_merge(
             completed=True,
@@ -661,20 +669,22 @@ def i_ralph_run(
             issue_title=selected_issue.title,
             commit_message_template=setup_config.commit_message_template,
         )
+        logger.info(sync_result.message)
+        _display_sync_result(active_display, sync_result)
     else:
-        sync_result = SyncMergeResult(
-            merged=False,
-            committed=False,
-            failed=False,
-            worktree_path=worktree_result.worktree_path,
-            message=(
-                "Skipped sync or commit because RALPH did not complete "
-                "or tests did not pass."
-            ),
+        skipped_sync_message = (
+            "Skipped sync or commit because RALPH did not complete "
+            "or tests did not pass."
         )
+        logger.info(skipped_sync_message)
+        active_display.i_display_message(skipped_sync_message)
 
-    logger.info(sync_result.message)
-    _display_sync_result(active_display, sync_result)
+    sync_committed = bool(sync_result and sync_result.committed)
+    sync_failed = bool(sync_result and sync_result.failed)
+    sync_commit_hash = sync_result.commit_hash if sync_result else ""
+    sync_has_uncommitted_changes = (
+        True if sync_result and sync_result.has_uncommitted_changes else None
+    )
 
     #############################################
     # 11. Close the GitHub issue only after tests pass and the fix is committed.
@@ -695,8 +705,8 @@ def i_ralph_run(
         RALPH_STATUS_COMPLETE
         if orchestrator_result.completed
         and test_result.passed
-        and getattr(sync_result, "committed", False)
-        and not getattr(sync_result, "failed", False)
+        and sync_committed
+        and not sync_failed
         else RALPH_STATUS_FAILED
     )
 
@@ -704,13 +714,14 @@ def i_ralph_run(
         issue_number=selected_issue.number,
         issue_title=selected_issue.title,
         head_branch=worktree_result.branch_name,
-        commit_hash=sync_result.commit_hash,
+        commit_hash=sync_commit_hash,
         base_branch="main",
         tests_passed=test_result.passed,
-        committed=getattr(sync_result, "committed", False),
+        committed=sync_committed,
         final_status=pull_request_final_status,
         verification_command=_format_command_for_display(test_command),
     )
+
     i_display_pull_request_draft(active_display, pull_request_draft_result)
 
     logger.info("Step 11b: Prepare future issue close placeholder metadata.")
@@ -722,10 +733,10 @@ def i_ralph_run(
     close_result = i_github_issue_close(
         issue=selected_issue,
         tests_passed=test_result.passed,
-        committed=getattr(sync_result, "committed", False),
+        committed=sync_committed,
         completed=orchestrator_result.completed,
         final_status=pull_request_final_status,
-        commit_hash=getattr(sync_result, "commit_hash", ""),
+        commit_hash=sync_commit_hash,
         enabled=setup_config.github_issue_close_enabled,
         dry_run=setup_config.dry_run,
         verification_command=_format_command_for_display(test_command),
@@ -764,12 +775,11 @@ def i_ralph_run(
     cleanup_completed = (
         orchestrator_result.completed
         and test_result.passed
-        and not getattr(sync_result, "failed", False)
+        and sync_result is not None
+        and not sync_failed
     )
 
-    cleanup_has_uncommitted_changes = (
-        True if getattr(sync_result, "has_uncommitted_changes", False) else None
-    )
+    cleanup_has_uncommitted_changes = sync_has_uncommitted_changes
 
     cleanup_result = i_worktree_cleanup(
         repo_path=repository_result.repo_path,
@@ -811,12 +821,12 @@ def i_ralph_run(
         message_parts.append(test_result.message)
         message_parts.append(_format_test_result_diagnostics(test_result))
 
-    if getattr(sync_result, "failed", False):
+    if sync_result is not None and sync_failed:
         message_parts.append(sync_result.message)
-    elif getattr(sync_result, "committed", False):
+    elif sync_result is not None and sync_committed:
         message_parts.append(sync_result.message)
 
-    if result_status == RALPH_STATUS_NO_CHANGES:
+    if result_status == RALPH_STATUS_NO_CHANGES and sync_result is not None:
         message_parts.append(sync_result.message)
 
     message_parts.append(cleanup_result.message)
@@ -835,7 +845,8 @@ def i_ralph_run(
         message=message_result,
         status=result_status,
         project_setup_result=project_setup_result,
-        test_result=test_result,  #  Added Code
+        test_result=test_result,
+        sync_result=sync_result,
         pull_request_draft_result=pull_request_draft_result,
         issue_close_result=close_result,
     )
@@ -1071,7 +1082,7 @@ def _format_test_result_diagnostics(test_result: TestRunResult) -> str:
 def _status_from_run_results(
     orchestrator_result: OrchestratorResult,
     test_result: TestRunResult,
-    sync_result: SyncMergeResult,
+    sync_result: SyncMergeResult | None,
     cleanup_result: WorktreeCleanupResult,
     allow_no_changes: bool = False,
     code_changes_detected: bool = False,
@@ -1083,8 +1094,9 @@ def _status_from_run_results(
     :type orchestrator_result: OrchestratorResult
     :param test_result: Result from the test runner seam.
     :type test_result: TestRunResult
-    :param sync_result: Result from the sync or commit seam.
-    :type sync_result: SyncMergeResult
+    :param sync_result: Result from the sync or commit seam, or ``None`` when
+        RALPH stopped before sync/commit or skipped sync/commit.
+    :type sync_result: SyncMergeResult | None
     :param cleanup_result: Result from the worktree cleanup seam.
     :type cleanup_result: WorktreeCleanupResult
     :param allow_no_changes: Whether no-change completion should count as
@@ -1113,6 +1125,9 @@ def _status_from_run_results(
         return RALPH_STATUS_BLOCKED
 
     if not test_result.passed:
+        return RALPH_STATUS_FAILED
+
+    if sync_result is None:
         return RALPH_STATUS_FAILED
 
     if sync_result.failed:
