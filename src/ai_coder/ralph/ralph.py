@@ -67,6 +67,7 @@ from ai_coder.display import (
     i_display_issue_close_result,
 )
 
+from ai_coder.codex_preflight import i_codex_preflight_check
 
 from ai_coder.pull_request_draft import (
     PullRequestDraftResult,
@@ -237,6 +238,7 @@ def i_ralph_run(
     repo_path: str | Path | None = None,
     allow_no_changes: bool = False,
     display: DisplayProtocol | None = None,
+    require_codex_preflight: bool = False,
 ) -> RalphResult:
     """
     Run one end-to-end RALPH tracer-bullet workflow.
@@ -269,8 +271,12 @@ def i_ralph_run(
     :param display: Optional display adapter. When omitted, RALPH uses
         ``SilentDisplay`` so tests and callers do not get noisy output.
     :type display: DisplayProtocol | None
+    :param require_codex_preflight: When ``True``, run the read-only Codex
+        provider/sandbox preflight before issue reading or worktree creation.
+    :type require_codex_preflight: bool
     :return: Final workflow result.
     :rtype: RalphResult
+
     """
 
     logger.info("Starting RALPH run...")
@@ -298,8 +304,32 @@ def i_ralph_run(
             orchestrator_result=None,
             completed=False,
             message=repository_result.message,
-            status="blocked",
+            status=RALPH_STATUS_BLOCKED,
         )
+
+    if require_codex_preflight:
+        logger.info("Step 1a: Run Codex preflight checks.")
+        active_display.i_display_message("Step 1a: Run Codex preflight checks.")
+        i_display_phase(active_display, "preflight")
+
+        codex_preflight_result = i_codex_preflight_check(setup_config)
+
+        logger.info(codex_preflight_result.message)
+        active_display.i_display_message(codex_preflight_result.message)
+
+        if codex_preflight_result.blocked:
+            logger.info(
+                "Codex preflight blocked RALPH before issue reading and worktree creation."
+            )
+
+            return RalphResult(
+                selected_issue=None,
+                prompt="",
+                orchestrator_result=None,
+                completed=False,
+                message=codex_preflight_result.message,
+                status=RALPH_STATUS_BLOCKED,
+            )
 
     #############################################
     # 2. Read open GitHub issues.
