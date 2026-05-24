@@ -4,7 +4,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
@@ -29,6 +29,22 @@ class CodexPreflightResult:
     version_output: str = ""
     diagnostics: str = ""
     exit_code: int | None = None
+    prompt_input_ready: bool = False
+    prompt_input_source: str = ""
+    issue_input_ready: bool = False
+    issue_input_source: str = ""
+    pull_request_safe: bool = False
+    issue_close_safe: bool = False
+    dry_run: bool = True
+
+
+@dataclass(frozen=True)
+class _CodexSafeInputCheckResult:
+    ready: bool
+    source: str = ""
+    message: str = ""
+    diagnostics: str = ""
+    dry_run: bool = True
 
 
 def i_codex_preflight_check(
@@ -88,14 +104,89 @@ def i_codex_preflight_check(
             sandbox_mode=sandbox_mode,
         )
 
+    dry_run = _configured_dry_run(config)
+
+    prompt_input_result = _check_prompt_input(config)
+    if not prompt_input_result.ready:
+        return _blocked_safe_input_result(
+            agent_provider=agent_provider,
+            sandbox_mode=sandbox_mode,
+            codex_command=codex_command,
+            prompt_input_result=prompt_input_result,
+            issue_input_result=_CodexSafeInputCheckResult(ready=False),
+            pull_request_safety_result=_CodexSafeInputCheckResult(ready=False),
+            issue_close_safety_result=_CodexSafeInputCheckResult(ready=False),
+            dry_run=dry_run,
+            message=prompt_input_result.message,
+            diagnostics=prompt_input_result.diagnostics,
+        )
+
+    issue_input_result = _check_issue_input(config)
+    if not issue_input_result.ready:
+        return _blocked_safe_input_result(
+            agent_provider=agent_provider,
+            sandbox_mode=sandbox_mode,
+            codex_command=codex_command,
+            prompt_input_result=prompt_input_result,
+            issue_input_result=issue_input_result,
+            pull_request_safety_result=_CodexSafeInputCheckResult(ready=False),
+            issue_close_safety_result=_CodexSafeInputCheckResult(ready=False),
+            dry_run=dry_run,
+            message=issue_input_result.message,
+            diagnostics=issue_input_result.diagnostics,
+        )
+
+    pull_request_safety_result = _check_pull_request_safety(
+        config,
+        dry_run=dry_run,
+    )
+    if not pull_request_safety_result.ready:
+        return _blocked_safe_input_result(
+            agent_provider=agent_provider,
+            sandbox_mode=sandbox_mode,
+            codex_command=codex_command,
+            prompt_input_result=prompt_input_result,
+            issue_input_result=issue_input_result,
+            pull_request_safety_result=pull_request_safety_result,
+            issue_close_safety_result=_CodexSafeInputCheckResult(ready=False),
+            dry_run=dry_run,
+            message=pull_request_safety_result.message,
+            diagnostics=pull_request_safety_result.diagnostics,
+        )
+
+    issue_close_safety_result = _check_issue_close_safety(
+        config,
+        dry_run=dry_run,
+    )
+    if not issue_close_safety_result.ready:
+        return _blocked_safe_input_result(
+            agent_provider=agent_provider,
+            sandbox_mode=sandbox_mode,
+            codex_command=codex_command,
+            prompt_input_result=prompt_input_result,
+            issue_input_result=issue_input_result,
+            pull_request_safety_result=pull_request_safety_result,
+            issue_close_safety_result=issue_close_safety_result,
+            dry_run=dry_run,
+            message=issue_close_safety_result.message,
+            diagnostics=issue_close_safety_result.diagnostics,
+        )
+
     if not _codex_executable_is_available(
         codex_command=codex_command,
         executable_finder=executable_finder,
     ):
-        return _blocked_missing_codex_executable(
-            agent_provider=agent_provider,
-            sandbox_mode=sandbox_mode,
-            codex_command=codex_command,
+        return _with_safe_input_fields(
+            _blocked_missing_codex_executable(
+                agent_provider=agent_provider,
+                sandbox_mode=sandbox_mode,
+                codex_command=codex_command,
+            ),
+            prompt_input_result=prompt_input_result,
+            issue_input_result=issue_input_result,
+            pull_request_safety_result=pull_request_safety_result,
+            issue_close_safety_result=issue_close_safety_result,
+            dry_run=dry_run,
         )
 
     version_command = _build_codex_version_command(codex_command)
@@ -105,6 +196,11 @@ def i_codex_preflight_check(
         codex_command=codex_command,
         version_command=version_command,
         command_runner=command_runner,
+        prompt_input_result=prompt_input_result,
+        issue_input_result=issue_input_result,
+        pull_request_safety_result=pull_request_safety_result,
+        issue_close_safety_result=issue_close_safety_result,
+        dry_run=dry_run,
     )
 
 
@@ -114,6 +210,279 @@ def _normalize_config_value(value: object) -> str:
 
 def _clean_codex_command(config: Any) -> str:
     return str(getattr(config, "codex_command", "")).strip()
+
+
+def _check_prompt_input(config: Any) -> _CodexSafeInputCheckResult:
+    prompt_text = _config_text(config, "prompt_text")
+
+    if prompt_text:
+        return _CodexSafeInputCheckResult(
+            ready=True,
+            source="prompt_text",
+            diagnostics="Prompt input is configured from inline prompt text.",
+        )
+
+    prompt_path_text = _config_text(config, "prompt_path")
+
+    if prompt_path_text:
+        prompt_path = Path(prompt_path_text)
+
+        if prompt_path.is_file():
+            return _CodexSafeInputCheckResult(
+                ready=True,
+                source="prompt_path",
+                diagnostics=f"Prompt input is configured from prompt path: {prompt_path}.",
+            )
+
+        message = "Codex preflight blocked: prompt input is required."
+        diagnostics = _shorten_diagnostic_text(
+            f"{message} Prompt path is not a file: {prompt_path}."
+        )
+        return _CodexSafeInputCheckResult(
+            ready=False,
+            message=message,
+            diagnostics=diagnostics,
+        )
+
+    message = "Codex preflight blocked: prompt input is required."
+    diagnostics = (
+        f"{message} Configure prompt_text or set prompt_path to an existing file."
+    )
+    return _CodexSafeInputCheckResult(
+        ready=False,
+        message=message,
+        diagnostics=diagnostics,
+    )
+
+
+def _check_issue_input(config: Any) -> _CodexSafeInputCheckResult:
+    if _provided_issue_data_is_available(config):
+        return _CodexSafeInputCheckResult(
+            ready=True,
+            source="provided_issue",
+            diagnostics="Issue input is configured from provided issue data.",
+        )
+
+    if _live_issue_reading_is_configured(config):
+        return _CodexSafeInputCheckResult(
+            ready=True,
+            source="live_issue_reading",
+            diagnostics=(
+                "Issue input is configured from live GitHub issue reading "
+                f"for repo '{_config_text(config, 'github_repo')}' "
+                f"and label '{_config_text(config, 'label')}'."
+            ),
+        )
+
+    message = "Codex preflight blocked: issue input is required."
+    diagnostics = _shorten_diagnostic_text(
+        f"{message} Provide issue_number, issue_title, and issue_body, "
+        "or configure github_repo and label for live issue reading."
+    )
+    return _CodexSafeInputCheckResult(
+        ready=False,
+        message=message,
+        diagnostics=diagnostics,
+    )
+
+
+def _check_pull_request_safety(
+    config: Any,
+    *,
+    dry_run: bool,
+) -> _CodexSafeInputCheckResult:
+    pull_request_creation_enabled = _pull_request_creation_is_enabled(config)
+
+    if pull_request_creation_enabled and not dry_run:
+        message = (
+            "Codex preflight blocked: pull request creation must be disabled "
+            "or dry-run for the Phase 3 Codex smoke proof."
+        )
+        return _CodexSafeInputCheckResult(
+            ready=False,
+            message=message,
+            diagnostics=message,
+            dry_run=dry_run,
+        )
+
+    source = "dry_run" if pull_request_creation_enabled else "disabled"
+    return _CodexSafeInputCheckResult(
+        ready=True,
+        source=source,
+        diagnostics=(
+            "Pull request creation is safe because it is "
+            f"{'enabled only in dry-run mode' if pull_request_creation_enabled else 'disabled'}."
+        ),
+        dry_run=dry_run,
+    )
+
+
+def _check_issue_close_safety(
+    config: Any,
+    *,
+    dry_run: bool,
+) -> _CodexSafeInputCheckResult:
+    issue_close_enabled = _config_bool(
+        config,
+        "github_issue_close_enabled",
+        default=False,
+    )
+
+    if issue_close_enabled and not dry_run:
+        message = (
+            "Codex preflight blocked: issue closing must be disabled or "
+            "dry-run for the Phase 3 Codex smoke proof."
+        )
+        return _CodexSafeInputCheckResult(
+            ready=False,
+            message=message,
+            diagnostics=message,
+            dry_run=dry_run,
+        )
+
+    source = "dry_run" if issue_close_enabled else "disabled"
+    return _CodexSafeInputCheckResult(
+        ready=True,
+        source=source,
+        diagnostics=(
+            "Issue closing is safe because it is "
+            f"{'enabled only in dry-run mode' if issue_close_enabled else 'disabled'}."
+        ),
+        dry_run=dry_run,
+    )
+
+
+def _configured_dry_run(config: Any) -> bool:
+    return _config_bool(config, "dry_run", default=True)
+
+
+def _provided_issue_data_is_available(config: Any) -> bool:
+    if _config_has_user_github_issue(config):
+        return True
+
+    return (
+        _config_int(config, "issue_number") > 0
+        and bool(_config_text(config, "issue_title"))
+        and bool(_config_text(config, "issue_body"))
+    )
+
+
+def _config_has_user_github_issue(config: Any) -> bool:
+    has_user_github_issue = getattr(config, "has_user_github_issue", None)
+
+    if not callable(has_user_github_issue):
+        return False
+
+    try:
+        return bool(has_user_github_issue())
+    except TypeError:
+        return False
+
+
+def _live_issue_reading_is_configured(config: Any) -> bool:
+    return bool(_config_text(config, "github_repo")) and bool(
+        _config_text(config, "label")
+    )
+
+
+def _pull_request_creation_is_enabled(config: Any) -> bool:
+    return _config_bool(
+        config,
+        "github_pull_request_creation_enabled",
+        default=False,
+    ) or _config_bool(
+        config,
+        "pull_request_creation_enabled",
+        default=False,
+    )
+
+
+def _config_text(config: Any, field_name: str) -> str:
+    return str(getattr(config, field_name, "") or "").strip()
+
+
+def _config_int(config: Any, field_name: str, default: int = 0) -> int:
+    raw_value = getattr(config, field_name, default)
+
+    try:
+        return int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _config_bool(config: Any, field_name: str, *, default: bool = False) -> bool:
+    raw_value = getattr(config, field_name, default)
+
+    if isinstance(raw_value, bool):
+        return raw_value
+
+    if raw_value is None:
+        return default
+
+    if isinstance(raw_value, str):
+        cleaned_value = raw_value.strip().casefold()
+
+        if cleaned_value in {"1", "true", "yes", "y", "on"}:
+            return True
+
+        if cleaned_value in {"0", "false", "no", "n", "off", ""}:
+            return False
+
+        return default
+
+    return bool(raw_value)
+
+
+def _blocked_safe_input_result(
+    *,
+    agent_provider: str,
+    sandbox_mode: str,
+    codex_command: str,
+    prompt_input_result: _CodexSafeInputCheckResult,
+    issue_input_result: _CodexSafeInputCheckResult,
+    pull_request_safety_result: _CodexSafeInputCheckResult,
+    issue_close_safety_result: _CodexSafeInputCheckResult,
+    dry_run: bool,
+    message: str,
+    diagnostics: str,
+) -> CodexPreflightResult:
+    return CodexPreflightResult(
+        ready=False,
+        blocked=True,
+        message=message,
+        agent_provider=agent_provider,
+        sandbox_mode=sandbox_mode,
+        codex_command=codex_command,
+        diagnostics=diagnostics,
+        prompt_input_ready=prompt_input_result.ready,
+        prompt_input_source=prompt_input_result.source,
+        issue_input_ready=issue_input_result.ready,
+        issue_input_source=issue_input_result.source,
+        pull_request_safe=pull_request_safety_result.ready,
+        issue_close_safe=issue_close_safety_result.ready,
+        dry_run=dry_run,
+    )
+
+
+def _with_safe_input_fields(
+    result: CodexPreflightResult,
+    *,
+    prompt_input_result: _CodexSafeInputCheckResult,
+    issue_input_result: _CodexSafeInputCheckResult,
+    pull_request_safety_result: _CodexSafeInputCheckResult,
+    issue_close_safety_result: _CodexSafeInputCheckResult,
+    dry_run: bool,
+) -> CodexPreflightResult:
+    return replace(
+        result,
+        prompt_input_ready=prompt_input_result.ready,
+        prompt_input_source=prompt_input_result.source,
+        issue_input_ready=issue_input_result.ready,
+        issue_input_source=issue_input_result.source,
+        pull_request_safe=pull_request_safety_result.ready,
+        issue_close_safe=issue_close_safety_result.ready,
+        dry_run=dry_run,
+    )
 
 
 def _build_codex_version_command(codex_command: str) -> list[str]:
@@ -150,6 +519,11 @@ def _run_codex_readiness_command(
     codex_command: str,
     version_command: list[str],
     command_runner: Callable[..., Any] | None,
+    prompt_input_result: _CodexSafeInputCheckResult,
+    issue_input_result: _CodexSafeInputCheckResult,
+    pull_request_safety_result: _CodexSafeInputCheckResult,
+    issue_close_safety_result: _CodexSafeInputCheckResult,
+    dry_run: bool,
 ) -> CodexPreflightResult:
     runner = command_runner or _default_codex_command_runner
     version_command_tuple = tuple(version_command)
@@ -157,28 +531,49 @@ def _run_codex_readiness_command(
     try:
         command_result = runner(version_command)
     except FileNotFoundError as error:
-        return _blocked_missing_codex_executable_after_run(
-            agent_provider=agent_provider,
-            sandbox_mode=sandbox_mode,
-            codex_command=codex_command,
-            version_command=version_command_tuple,
-            error=error,
+        return _with_safe_input_fields(
+            _blocked_missing_codex_executable_after_run(
+                agent_provider=agent_provider,
+                sandbox_mode=sandbox_mode,
+                codex_command=codex_command,
+                version_command=version_command_tuple,
+                error=error,
+            ),
+            prompt_input_result=prompt_input_result,
+            issue_input_result=issue_input_result,
+            pull_request_safety_result=pull_request_safety_result,
+            issue_close_safety_result=issue_close_safety_result,
+            dry_run=dry_run,
         )
     except subprocess.TimeoutExpired as error:
-        return _blocked_codex_readiness_timeout(
-            agent_provider=agent_provider,
-            sandbox_mode=sandbox_mode,
-            codex_command=codex_command,
-            version_command=version_command_tuple,
-            error=error,
+        return _with_safe_input_fields(
+            _blocked_codex_readiness_timeout(
+                agent_provider=agent_provider,
+                sandbox_mode=sandbox_mode,
+                codex_command=codex_command,
+                version_command=version_command_tuple,
+                error=error,
+            ),
+            prompt_input_result=prompt_input_result,
+            issue_input_result=issue_input_result,
+            pull_request_safety_result=pull_request_safety_result,
+            issue_close_safety_result=issue_close_safety_result,
+            dry_run=dry_run,
         )
     except OSError as error:
-        return _blocked_codex_readiness_os_error(
-            agent_provider=agent_provider,
-            sandbox_mode=sandbox_mode,
-            codex_command=codex_command,
-            version_command=version_command_tuple,
-            error=error,
+        return _with_safe_input_fields(
+            _blocked_codex_readiness_os_error(
+                agent_provider=agent_provider,
+                sandbox_mode=sandbox_mode,
+                codex_command=codex_command,
+                version_command=version_command_tuple,
+                error=error,
+            ),
+            prompt_input_result=prompt_input_result,
+            issue_input_result=issue_input_result,
+            pull_request_safety_result=pull_request_safety_result,
+            issue_close_safety_result=issue_close_safety_result,
+            dry_run=dry_run,
         )
 
     exit_code = _command_result_exit_code(command_result)
@@ -208,6 +603,13 @@ def _run_codex_readiness_command(
             version_output=stdout_text.strip(),
             diagnostics=diagnostics,
             exit_code=exit_code,
+            prompt_input_ready=prompt_input_result.ready,
+            prompt_input_source=prompt_input_result.source,
+            issue_input_ready=issue_input_result.ready,
+            issue_input_source=issue_input_result.source,
+            pull_request_safe=pull_request_safety_result.ready,
+            issue_close_safe=issue_close_safety_result.ready,
+            dry_run=dry_run,
         )
 
     version_output = stdout_text.strip() or stderr_text.strip()
@@ -226,6 +628,13 @@ def _run_codex_readiness_command(
         version_output=version_output,
         diagnostics="",
         exit_code=exit_code,
+        prompt_input_ready=prompt_input_result.ready,
+        prompt_input_source=prompt_input_result.source,
+        issue_input_ready=issue_input_result.ready,
+        issue_input_source=issue_input_result.source,
+        pull_request_safe=pull_request_safety_result.ready,
+        issue_close_safe=issue_close_safety_result.ready,
+        dry_run=dry_run,
     )
 
 
