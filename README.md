@@ -186,10 +186,11 @@ Run one test file:
 poetry run pytest tests/ralph/test_release1_end_to_end.py
 ```
 
-Run the README documentation coverage test:
+Run the README documentation coverage tests:
 
 ```powershell
-poetry run pytest tests/test_readme_release1_documentation.py
+poetry run pytest tests/test_docs/test_readme_release1_documentation.py
+poetry run pytest tests/test_docs/test_readme_provider_sandbox_extension_documentation.py
 ```
 
 Fallback only when Poetry is unavailable:
@@ -344,6 +345,28 @@ Development should stay tracer-bullet focused:
 
 # My Stuff
 
+## Current Status
+
+AI Code is a Python learning project for building **RALPH**, a safe coding-agent workflow that works through one GitHub issue at a time.
+
+The current codebase has moved beyond the first tiny mock-only slice. The default path is still the safe Release 1 local tracer bullet, but the project now also has tested extension seams for Docker bind-mount execution, scaffold generation, GitHub issue safety metadata, Codex preflight checks, and CodexProvider output normalization.
+
+The safest way to think about the project is:
+
+```text
+Release 1 default path:
+provided issue -> safe worktree -> local sandbox -> mock agent -> tests -> commit/sync safety
+
+Optional extension paths:
+Docker bind-mount sandbox
+CodexProvider command adapter
+Codex final-message-file and JSONL output handling
+dry-run GitHub PR / issue-close metadata
+.ai-code scaffold templates
+```
+
+Automatic pull request creation and automatic GitHub issue closing are still not production behavior. They remain disabled, placeholder, or dry-run safety workflows unless a future tested issue explicitly enables them.
+
 ## What Problem AI Code Solves
 
 AI Code helps a solo Python developer safely repeat the GitHub issue-fixing workflow.
@@ -355,7 +378,7 @@ Without AI Code, the developer has to manually:
 - create a branch or worktree,
 - prepare a prompt,
 - run an AI coding tool,
-- review the changes,
+- review command output,
 - run tests,
 - commit safe work,
 - preserve failed attempts,
@@ -368,21 +391,24 @@ The main safety goal is simple: RALPH should not risk the main repository checko
 
 ## What RALPH Does
 
-RALPH is the coding agent workflow inside AI Code.
+RALPH is the high-level workflow inside AI Code.
 
-For the Release 1 tracer bullet, RALPH can:
+For the current tested path, RALPH can:
 
 - receive one fake or provided issue,
 - select one actionable issue,
 - create or use a safe worktree path,
-- start the local sandbox adapter,
+- start the selected sandbox adapter,
 - resolve prompt text,
-- preprocess prompt placeholders after the sandbox is ready,
-- run the mock agent through the sandbox seam,
+- preprocess safe placeholders after the sandbox is ready,
+- create the selected agent provider through `i_agent_provider_create()`,
+- run the agent through the orchestrator,
+- display normalized provider events when available,
 - detect `<promise>COMPLETE</promise>`,
 - run the configured test command,
 - commit and sync only successful work,
 - preserve failed or dirty worktrees,
+- expose phase results through the public `RalphResult`,
 - return a clear status and readable output.
 
 Long term, RALPH should automate one GitHub issue at a time from issue selection through safe commit and later human-approved PR or issue-close workflow.
@@ -400,11 +426,85 @@ It focuses on proving the end-to-end safety model with local execution:
 - explicit completion detection,
 - pytest execution,
 - safe worktree creation,
-- safe commit/sync behavior when tests pass,
+- safe commit and sync behavior when tests pass,
 - preservation on failure or dirty state,
 - visible progress output.
 
 Release 1 is intentionally small. Its job is to prove the workflow before adding broader automation.
+
+## Current Phase 3 Codex Scope
+
+CodexProvider is the first real coding-agent provider path.
+
+The current CodexProvider code supports:
+
+- command construction inside `CodexCommandContract`,
+- non-interactive `codex exec`,
+- `--cd <worktree-path>`,
+- `--sandbox workspace-write`,
+- `--color never`,
+- `--json`,
+- `--output-last-message <path>`,
+- prompt text passed through stdin,
+- final message file output priority,
+- structured JSONL event fallback,
+- plain stdout fallback,
+- stderr and provider diagnostics for failures,
+- normalized provider-readable events.
+
+The output priority is:
+
+1. final message file output,
+2. structured JSONL events,
+3. plain stdout fallback,
+4. stderr or provider diagnostics for failures.
+
+The important rule is that the orchestrator should not parse raw Codex JSONL. Codex-specific output handling belongs inside `CodexProvider`. The orchestrator receives normal `AgentResponse.output`, `AgentResponse.error`, and `AgentResponse.events`.
+
+## Codex JSONL Event Normalization
+
+CodexProvider now normalizes supported JSONL stdout into provider-readable events.
+
+Normalized event types may include:
+
+- `text`
+- `tool_call`
+- `result`
+- `error`
+- `session`
+
+Useful behavior includes:
+
+- missing final message file can fall back to JSONL agent-message text,
+- final message file still wins over JSONL and stdout,
+- plain stdout is still visible when stdout is not structured JSONL,
+- session id values are preserved when available,
+- text-like events become normalized text events,
+- result-like events become normalized result events,
+- tool-call-like events become tool-call or result events depending on status,
+- error-like events become normalized error events,
+- malformed JSONL creates a visible diagnostic or parse-error event,
+- non-zero Codex exit still fails the provider response.
+
+This keeps provider-specific Codex output details behind the provider seam.
+
+## Codex Preflight Checks
+
+Codex preflight is a read-only readiness check for the first Codex smoke-proof path.
+
+The current checks can verify:
+
+- selected provider is `codex`,
+- sandbox mode is `local`,
+- `CODEX_COMMAND` is configured,
+- the Codex executable can be found,
+- `codex --version` can run,
+- prompt input is available,
+- issue input is available,
+- pull request creation is disabled or dry-run,
+- issue closing is disabled or dry-run.
+
+Preflight should not create providers, start sandboxes, create worktrees, call models, commit changes, create pull requests, or close GitHub issues.
 
 ## What Is Intentionally Future Work
 
@@ -419,7 +519,7 @@ The following features are not automatic Release 1 behavior:
 - multi-agent workflows,
 - full autonomous GitHub issue management.
 
-Docker and CodexProvider are later-phase or optional paths. Keep the default Release 1 path local and mock-provider friendly unless you are specifically testing those paths.
+Docker and CodexProvider are optional or later-phase paths. Keep the default Release 1 path local and mock-provider friendly unless you are specifically testing those paths.
 
 ## Requirements
 
@@ -440,7 +540,7 @@ cd ai_coder
 poetry install
 ```
 
-Poetry reads `pyproject.toml`, installs the project dependencies, and uses `poetry.lock` when present for repeatable dependency versions.
+Poetry reads `pyproject.toml`, installs project dependencies, and uses `poetry.lock` when present for repeatable dependency versions.
 
 Verify the install by running:
 
@@ -463,18 +563,20 @@ The expected configuration flow is:
 
 Useful user-facing configuration values include:
 
-| Name                 | Purpose                                                                 |
-| -------------------- | ----------------------------------------------------------------------- |
-| `REPO_PATH`          | Local repository path RALPH should use.                                 |
-| `PROMPT_PATH`        | Prompt markdown file path.                                              |
-| `GITHUB_REPO`        | GitHub owner/repository name.                                           |
-| `RALPH_AGENT`        | Agent provider name, usually `mock` for Release 1.                      |
-| `RALPH_SANDBOX_MODE` | Sandbox mode, usually `local` for Release 1.                            |
-| `TEST_COMMAND`       | Test command, defaulting to `poetry run pytest`.                        |
-| `DRY_RUN`            | Safety mode for future GitHub automation.                               |
-| `CODEX_COMMAND`      | Codex command path or name when using the optional Codex provider path. |
+| Name                               | Purpose                                                                                             |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `REPO_PATH`                        | Local repository path RALPH should use.                                                             |
+| `PROMPT_PATH`                      | Prompt markdown file path.                                                                          |
+| `GITHUB_REPO`                      | GitHub owner/repository name.                                                                       |
+| `RALPH_AGENT`                      | Agent provider name. Use `mock` for the default local tracer bullet or `codex` for Codex testing.   |
+| `RALPH_SANDBOX_MODE`               | Sandbox mode. Use `local` for the default path or `docker` when testing Docker bind-mount behavior. |
+| `TEST_COMMAND`                     | Test command, defaulting to `poetry run pytest`.                                                    |
+| `DRY_RUN`                          | Safety mode for future GitHub automation.                                                           |
+| `CODEX_COMMAND`                    | Codex command path or name when using the optional Codex provider path.                             |
+| `RALPH_DOCKER_IMAGE_NAME`          | Docker image name for Docker sandbox testing.                                                       |
+| `RALPH_GITHUB_ISSUE_CLOSE_ENABLED` | Future issue-close enablement flag. Real issue closing is still disabled or placeholder behavior.   |
 
-CLI values should be validated before they change the runtime configuration.
+CLI values should be validated before they change runtime configuration.
 
 ## Run the Local Release 1 Tracer Bullet
 
@@ -502,6 +604,21 @@ What to expect:
 - RALPH reports the final result.
 - Release 1 does not automatically open a pull request or close a GitHub issue.
 
+## Run Codex Preflight
+
+Use Codex preflight only when intentionally testing the Codex path.
+
+Recommended environment shape:
+
+```powershell
+$env:RALPH_AGENT="codex"
+$env:RALPH_SANDBOX_MODE="local"
+$env:CODEX_COMMAND="codex"
+$env:DRY_RUN="true"
+```
+
+The preflight behavior is read-only. It verifies readiness and safety settings before any real Codex smoke proof should run.
+
 ## Run Tests
 
 Preferred command:
@@ -516,10 +633,11 @@ Run one test file:
 poetry run pytest tests/ralph/test_release1_end_to_end.py
 ```
 
-Run the README documentation coverage test:
+Run README documentation tests:
 
 ```powershell
-poetry run pytest tests/test_readme_release1_documentation.py
+poetry run pytest tests/test_docs/test_readme_release1_documentation.py
+poetry run pytest tests/test_docs/test_readme_provider_sandbox_extension_documentation.py
 ```
 
 Run tests in a folder:
@@ -565,9 +683,63 @@ RALPH runs commands through the sandbox seam:
 i_sandboxhandle_run()
 ```
 
-Release 1 uses local sandbox execution. The orchestrator should not need to know whether a command runs locally, in Docker, or in a future cloud sandbox.
+The high-level workflow starts sandboxes through:
 
-The seam gives AI Code depth and flexibility: Docker or future sandbox providers can replace local execution later without rewriting the orchestrator.
+```text
+i_sandbox_start()
+```
+
+The sandbox adapter returns a normalized command result with:
+
+- `stdout`
+- `stderr`
+- `exit_code`
+- success or failure state
+
+Release 1 uses local sandbox execution. Docker bind-mount mode is an optional tested extension path. Future cloud or long-running sandbox providers should stay behind the same seam.
+
+## Docker Bind-Mount Sandbox
+
+Docker bind-mount mode lets the container work directly in a mounted host worktree.
+
+In Docker bind-mount mode:
+
+1. RALPH creates or receives a host Git worktree path.
+2. The Docker sandbox mounts that host worktree into the container.
+3. The container sees the mounted worktree at `/workspace`.
+4. Commands run with `/workspace` as the container working directory.
+5. File edits made inside Docker appear in the host worktree.
+6. The host can inspect Git state after the Docker command finishes.
+7. Dirty or failed worktrees are preserved for human review.
+
+The default Docker image is:
+
+```text
+ai-code-ralph-test-runtime:latest
+```
+
+Do not pass the full host environment into Docker. Use explicit allowlists:
+
+```text
+docker_env_allowlist
+docker_secret_env_allowlist
+provider_env_allowlist
+provider_secret_env_allowlist
+```
+
+The default normal Docker env allowlist includes:
+
+```text
+PYTHONUNBUFFERED
+```
+
+The default secret Docker env allowlist is empty.
+
+Docker command redaction belongs in:
+
+```text
+i_dockercommand_redact()
+```
 
 ## Result Statuses
 
@@ -606,7 +778,7 @@ Create a safe Git worktree
         |
         v
 Start sandbox provider
-(local for Release 1)
+(local by default)
         |
         v
 Resolve prompt / prompt file
@@ -615,7 +787,10 @@ Resolve prompt / prompt file
 Preprocess safe placeholders
         |
         v
-Run fake/test agent through sandbox seam
+Run selected agent through sandbox seam
+        |
+        v
+Display normalized provider events
         |
         v
 Detect <promise>COMPLETE</promise>
@@ -635,204 +810,77 @@ Print readable result
 
 Release 1 focuses on proving this end-to-end path locally. Docker, Codex, automatic pull requests, automatic issue closing, and multi-agent workflows are later-phase or disabled placeholder behavior unless current tests prove otherwise.
 
+## Main Modules
+
+- **`setup_config.py`** — Final runtime source of truth for validated configuration values.
+- **`main`** — CLI entry point for `ai-coder` and `ai-coder scaffold`.
+- **`ralph`** — High-level workflow that selects one issue and coordinates the run.
+- **`github_issues`** — Reads, represents, filters, selects, and safely prepares issue-close metadata.
+- **`worktree_manager`** — Creates, checks, removes, and preserves safe Git worktrees.
+- **`sandbox_provider`** — Runs commands behind the sandbox seam.
+- **`agent_provider`** — Creates mock or Codex agent providers behind one interface.
+- **`codex_preflight`** — Performs read-only Codex readiness and safety checks.
+- **`orchestrator`** — Runs the agent loop until completion, failure, or max iterations.
+- **`completion_detector`** — Detects the explicit `<promise>COMPLETE</promise>` signal.
+- **`prompt_resolver`** — Loads prompt text from inline text or prompt files.
+- **`prompt_preprocessor`** — Replaces safe placeholders while keeping issue text inert.
+- **`project_setup`** — Runs baseline project setup checks before the agent phase.
+- **`test_runner`** — Runs the configured test command through the sandbox seam.
+- **`sync_in` / `sync_out`** — Minimal seams for current sync behavior and future isolated or cloud sandbox file movement.
+- **`display`** — Shows phases, selected issues, agent events, command results, test results, commits, and preserved worktrees.
+- **`pull_request_draft`** — Builds future-safe PR draft metadata without opening a PR automatically.
+- **`scaffold`** — Creates `.ai-code/` workflow template files.
+- **`repository_context`** — Gathers safe repository context for prompt construction.
+
+## Current Implementation Status
+
+### Working Now
+
+- AI Code can run from the `ai-coder` console script.
+- AI Code can also run with `python -m ai_coder`.
+- CLI arguments are validated before being applied into `setup_config.py`.
+- RALPH can receive one provided issue from CLI arguments.
+- GitHub issue data is treated as inert text.
+- Issue labels and assignments can be used to select or skip issues.
+- RALPH can select one actionable issue.
+- RALPH can build a prompt from issue data.
+- RALPH can create, preserve, and clean up safe worktrees.
+- RALPH can start a local sandbox adapter.
+- RALPH can run a fake/test agent through the sandbox seam.
+- RALPH can detect `<promise>COMPLETE</promise>`.
+- RALPH can run pytest through the sandbox seam.
+- RALPH can commit and sync successful changes.
+- RALPH can preserve failed or dirty worktrees.
+- RALPH exposes setup, test, sync, cleanup, PR draft, and issue-close phase results.
+- Display code can show normalized provider events.
+- Docker bind-mount support exists behind the sandbox provider seam.
+- Docker environment allowlists and redaction helpers exist.
+- CodexProvider can run through the provider seam.
+- CodexProvider can prefer final message file output.
+- CodexProvider can parse structured JSONL events when final message output is unavailable.
+- CodexProvider can fall back to plain stdout when output is not structured JSONL.
+- CodexProvider preserves non-zero exit behavior.
+- Codex preflight can verify provider, sandbox, executable, prompt input, issue input, PR safety, and issue-close safety.
+- PR creation is represented only as future/disabled draft metadata.
+- GitHub issue closing is represented only as future/disabled or dry-run placeholder behavior.
+- `.ai-code/` scaffold templates can be generated.
+- The test suite passes with `poetry run pytest`.
+
+### Still Future or Disabled
+
+- Automatic pull request creation is not automatic behavior.
+- Automatic GitHub issue closing is not automatic behavior.
+- Cloud sandbox providers are not implemented.
+- Long-running Docker container orchestration is not implemented.
+- Multi-agent workflows are not implemented.
+- Full autonomous GitHub issue management is not implemented.
+- Real issue closing should wait for committed work, passing tests, clean state, and human approval.
+
 ## Provider and Sandbox Extension Guide
 
 AI Code keeps agent execution and command execution behind small public seams. This lets RALPH stay simple while the project grows from the Release 1 local tracer bullet into Docker, Codex, and future adapters.
 
 Current code and tests are the source of truth. This section documents extension points; it does not mean every future provider, cloud sandbox, pull request workflow, or issue-close workflow is implemented.
-
-### Sandbox Seam
-
-RALPH should not call `subprocess.run()` directly from the high-level workflow.
-
-RALPH starts a sandbox through:
-
-```text
-i_sandbox_start()
-```
-
-RALPH runs commands through the sandbox handle seam:
-
-```text
-i_sandboxhandle_run()
-```
-
-The sandbox adapter returns a normalized `CommandResult`. That result gives callers a consistent shape for command output:
-
-- `stdout`
-- `stderr`
-- `exit_code`
-- success or failure state
-
-This keeps local execution, Docker execution, and future sandbox execution details out of RALPH and the orchestrator.
-
-The important idea is:
-
-```text
-RALPH asks for command execution.
-The selected sandbox provider decides how command execution happens.
-RALPH reads the normalized result.
-```
-
-### Local Sandbox
-
-The local sandbox is the default Release 1 path.
-
-Use it for the simple local tracer bullet:
-
-```powershell
-poetry run ai-coder --repo-path . --agent mock --sandbox local --dry-run
-```
-
-Local sandbox mode is useful because it proves the workflow before Docker, cloud sandboxes, or long-running containers are added.
-
-### Docker Bind-Mount Sandbox
-
-Docker bind-mount mode is the first Docker sandbox path.
-
-In Docker bind-mount mode:
-
-1. RALPH creates or receives a host Git worktree path.
-2. `DockerSandboxProvider` mounts that host worktree into the container.
-3. The container sees the mounted worktree at `/workspace`.
-4. Commands run with `/workspace` as the container working directory.
-5. File edits made inside Docker appear in the host worktree because the worktree is bind-mounted.
-6. The host can inspect Git state after the Docker command finishes.
-7. Dirty or failed worktrees are preserved for human review.
-
-The default Docker image is:
-
-```text
-ai-code-ralph-test-runtime:latest
-```
-
-Docker image validation belongs in the Docker adapter layer. RALPH should not hard-code Docker image checks into the high-level workflow.
-
-AI Code does not auto-build the Docker image in this slice. Build the image manually when you intentionally test Docker mode.
-
-Windows path conversion and worktree `.git` handling should stay in:
-
-```text
-src/ai_coder/sandbox_provider/mount_utils.py
-```
-
-That keeps Windows mount behavior local to the sandbox provider layer instead of spreading it across RALPH, the orchestrator, or agent providers.
-
-### Docker Environment Allowlists and Redaction
-
-AI Code should not pass the full host environment into Docker.
-
-Normal Docker environment variable names come from:
-
-```text
-docker_env_allowlist
-```
-
-Secret-like Docker environment variable names come from:
-
-```text
-docker_secret_env_allowlist
-```
-
-Provider-specific environment names can flow through:
-
-```text
-provider_env_allowlist
-provider_secret_env_allowlist
-```
-
-The default normal Docker env allowlist includes:
-
-```text
-PYTHONUNBUFFERED
-```
-
-`PYTHONUNBUFFERED` may default to `1`.
-
-The default secret Docker env allowlist is empty.
-
-Real API keys such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GH_TOKEN` should not be included by default during the early Docker tracer-bullet phase.
-
-Missing normal environment variables are skipped, except for `PYTHONUNBUFFERED`.
-
-Missing configured secret environment variables should block with a clear error when the Docker command is built.
-
-Docker command redaction belongs in:
-
-```text
-i_dockercommand_redact()
-```
-
-`i_dockercommand_redact()` should receive the command and configured secret env names as inputs. It should not import `setup_config.py`.
-
-Redaction only hides configured secret env values. Normal environment values may be shown normally.
-
-The redaction utility should support these Docker env argument forms:
-
-```text
--e NAME=value
---env NAME=value
---env=NAME=value
-```
-
-### CodexProvider
-
-`CodexProvider` is the first real agent provider path.
-
-RALPH should choose providers through:
-
-```text
-i_agent_provider_create()
-```
-
-For Codex, RALPH should use:
-
-```text
-i_agent_provider_create("codex", ...)
-```
-
-Command construction belongs inside:
-
-```text
-CodexCommandContract
-CodexProvider
-```
-
-RALPH should not hard-code Codex CLI details.
-
-`CodexProvider` uses non-interactive Codex execution with:
-
-```text
-codex exec
-```
-
-Prompt text should be passed through stdin instead of being placed directly into a large command argument. This keeps long GitHub issue bodies, Windows paths, quotes, and shell-like characters inert.
-
-The current command shape includes:
-
-```text
-codex exec
---cd <worktree-path>
---sandbox workspace-write
---color never
---json
---output-last-message <path>
--
-```
-
-`CodexProvider` should prefer structured JSONL output when available.
-
-When structured output is unavailable, plain stdout fallback keeps useful text output visible.
-
-Normalized provider events may include:
-
-- text events
-- tool call events
-- result events
-- error events
-- session events
-
-The orchestrator should consume normalized provider results instead of depending on one provider's raw output format.
 
 ### Adding a Future Agent Provider
 
@@ -872,124 +920,80 @@ Use this checklist:
 
 Only add `sync_in` or `sync_out` behavior for isolated or cloud sandboxes that need file copy. Local mode and Docker bind-mount mode work directly in the worktree path and do not need separate file syncing.
 
-### `.ai-code` Scaffold Extension Points
+## `.ai-code` Scaffold Files
 
-The command:
+AI Code can create project-specific workflow template files under `.ai-code/`.
+
+Create the scaffold in the current repository:
 
 ```powershell
 poetry run ai-coder scaffold --repo-path .
 ```
 
-creates project-specific automation files under:
-
-```text
-.ai-code/
-```
-
-Current scaffold files may include:
-
-- `.ai-code/README.md`
-- `.ai-code/.env.example`
-- `.ai-code/Dockerfile`
-- `.ai-code/prompts/implementation.md`
-- `.ai-code/prompts/review.md`
-- `.ai-code/prompts/merge.md`
-- `.ai-code/standards/coding-standards.md`
-
-Scaffold generation belongs behind:
-
-```text
-i_scaffold_create()
-```
-
-The scaffold file list belongs in:
-
-```text
-_default_scaffold_files()
-```
-
-Existing files are skipped unless overwrite is explicitly requested.
-
-Use overwrite only when you intentionally want to replace existing scaffold files:
+Existing files are skipped by default. Use overwrite only when you intentionally want to replace existing scaffold files:
 
 ```powershell
 poetry run ai-coder scaffold --repo-path . --overwrite
 ```
 
-Generated scaffold files must not contain real secrets.
+The scaffold may include:
 
-New scaffold templates should be tested in:
+- `.ai-code/README.md`,
+- `.ai-code/.env.example`,
+- `.ai-code/Dockerfile`,
+- `.ai-code/prompts/implementation.md`,
+- `.ai-code/prompts/review.md`,
+- `.ai-code/prompts/merge.md`,
+- `.ai-code/standards/coding-standards.md`.
 
-```text
-tests/scaffold/test_scaffold.py
+Do not put real secrets in `.ai-code/.env.example`.
+
+## Scaffold Commands
+
+Run the test suite first:
+
+```powershell
+poetry run pytest
 ```
 
-### Current Scope Versus Future Work
+Create `.ai-code/` scaffold files in the current repository:
 
-The current implementation supports local tracer-bullet behavior and tested optional extension paths.
+```powershell
+poetry run ai-coder scaffold --repo-path .
+```
 
-The following are future extension points, not implemented production behavior:
+Create scaffold files in a safe temporary folder:
 
-- automatic pull request creation is not implemented as automatic Release 1 behavior,
-- automatic GitHub issue closing is not implemented as automatic Release 1 behavior,
-- cloud sandbox providers are not implemented,
-- multi-agent workflows are not implemented,
-- long-running Docker container orchestration is not implemented.
+```powershell
+mkdir temp_scaffold_check
+poetry run ai-coder scaffold --repo-path temp_scaffold_check
+```
 
-Keep documentation tied to what current code and tests prove. Describe unfinished behavior as a future extension point, not as a completed feature.
+Check the generated scaffold folder:
 
-## Main Modules
+```powershell
+dir temp_scaffold_check\.ai-code
+type temp_scaffold_check\.ai-code\.env.example
+type temp_scaffold_check\.ai-code\README.md
+type temp_scaffold_check\.ai-code\prompts\implementation.md
+type temp_scaffold_check\.ai-code\prompts\review.md
+type temp_scaffold_check\.ai-code\prompts\merge.md
+type temp_scaffold_check\.ai-code\standards\coding-standards.md
+```
 
-- **`setup_config.py`** — Final runtime source of truth for validated configuration values.
-- **`main`** — CLI entry point for `ai-coder` and `ai-coder scaffold`.
-- **`ralph`** — High-level workflow that selects one issue and coordinates the run.
-- **`github_issues`** — Reads, represents, filters, and selects GitHub issue data.
-- **`worktree_manager`** — Creates and preserves safe Git worktrees.
-- **`sandbox_provider`** — Runs commands behind the sandbox seam.
-- **`agent_provider`** — Creates mock or real agent providers behind one interface.
-- **`orchestrator`** — Runs the agent loop until completion, failure, or max iterations.
-- **`completion_detector`** — Detects the explicit `<promise>COMPLETE</promise>` signal.
-- **`prompt_resolver`** — Loads prompt text from inline text or prompt files.
-- **`prompt_preprocessor`** — Replaces safe placeholders while keeping issue text inert.
-- **`test_runner`** — Runs the configured test command through the sandbox seam.
-- **`sync_in` / `sync_out`** — Future seams for isolated or cloud sandbox file movement.
-- **`display`** — Shows phases, selected issues, command results, test results, commits, and preserved worktrees.
-- **`pull_request_draft`** — Builds future-safe PR draft metadata without opening a PR automatically.
-- **`scaffold`** — Creates `.ai-code/` workflow template files.
+Run scaffold a second time to confirm existing files are skipped:
 
-## Current Implementation Status
+```powershell
+poetry run ai-coder scaffold --repo-path temp_scaffold_check
+```
 
-### What's Working
+Run scaffold with overwrite only when you intentionally want to replace existing scaffold files:
 
-- AI Code can run from the `ai-coder` console script.
-- AI Code can also run with `python -m ai_coder`.
-- CLI arguments are validated before being applied into `setup_config.py`.
-- RALPH can receive one provided issue from CLI arguments.
-- GitHub issue data is treated as inert text.
-- Issue labels and assignments can be used to select or skip issues.
-- RALPH can select one actionable issue.
-- RALPH can build a prompt from issue data.
-- RALPH can create or use a safe worktree path.
-- RALPH can start a local sandbox adapter.
-- RALPH can run a fake/test agent through the sandbox seam.
-- RALPH can detect `<promise>COMPLETE</promise>`.
-- RALPH can run pytest through the sandbox seam.
-- RALPH can preserve failed or dirty worktrees.
-- RALPH can report readable status output.
-- PR creation is represented only as future/disabled draft metadata.
-- GitHub issue closing is represented only as future/disabled or dry-run placeholder behavior.
-- `.ai-code/` scaffold templates can be generated.
+```powershell
+poetry run ai-coder scaffold --repo-path temp_scaffold_check --overwrite
+```
 
-### What's Planned Next Rev.
-
-- Improve Release 1 user documentation and examples.
-- Keep local tracer-bullet behavior clear and beginner-friendly.
-- Continue strengthening worktree safety and preservation behavior.
-- Continue improving Docker bind-mount support behind the sandbox provider seam.
-- Continue improving CodexProvider as an optional real agent provider.
-- Add more repository-context guidance without sending secrets or huge folders.
-- Keep automatic PR creation disabled until a future approved workflow enables it.
-- Keep automatic GitHub issue closing disabled until tests, commit success, clean state, and human approval are enforced.
+Do not put real secrets in `.ai-code/.env.example`.
 
 ## Design Philosophy
 
@@ -997,7 +1001,7 @@ AI Code uses **tracer bullets**.
 
 A tracer bullet is a thin end-to-end slice that proves the idea works before advanced features are added. Instead of building the full autonomous coding system in one large step, AI Code adds small working slices that can be tested and understood.
 
-**Design Principles:**
+Design principles:
 
 - Build small slices.
 - Prefer readable Python over clever abstractions.
@@ -1010,8 +1014,6 @@ A tracer bullet is a thin end-to-end slice that proves the idea works before adv
 - Run tests before claiming success.
 - Preserve failed or dirty worktrees for human review.
 - Avoid claiming future features are available before tests prove them.
-
-**Interface Naming:**
 
 Public interface functions should use this naming pattern:
 
@@ -1031,7 +1033,7 @@ i_prompt_resolve()
 i_prompt_preprocess()
 i_orchestrator_run()
 i_github_issue_select()
-i_test_run()
+i_test_runner_run()
 ```
 
 Private helper functions should start with `_`.
@@ -1065,74 +1067,6 @@ Do not use this command for this project:
 
 ```powershell
 python -m pytest --capture=tee-sys
-```
-
-## Project Structure
-
-```text
-ai_coder/
-├── pyproject.toml
-├── poetry.lock
-├── README.md
-├── .ai-code/
-│   ├── .env.example
-│   ├── README.md
-│   ├── prompts/
-│   │   ├── implementation.md
-│   │   ├── review.md
-│   │   └── merge.md
-│   └── standards/
-│       └── coding-standards.md
-├── .ai_coder/
-│   ├── .env.example
-│   ├── Dockerfile
-│   ├── prompt.md
-│   ├── ai_coder_worktrees/
-│   └── logs/
-├── docker/
-│   └── ralph-test-runtime/
-│       └── Dockerfile
-├── src/
-│   └── ai_coder/
-│       ├── __init__.py
-│       ├── __main__.py
-│       ├── setup_config.py
-│       ├── agent_provider/
-│       ├── completion_detector/
-│       ├── display/
-│       ├── github_issues/
-│       ├── main/
-│       ├── orchestrator/
-│       ├── prompt_preprocessor/
-│       ├── prompt_resolver/
-│       ├── pull_request_draft/
-│       ├── ralph/
-│       ├── repository_context/
-│       ├── sandbox_provider/
-│       ├── scaffold/
-│       ├── sync_in/
-│       ├── sync_out/
-│       ├── test_runner/
-│       └── worktree_manager/
-└── tests/
-    ├── agent_provider/
-    ├── completion_detector/
-    ├── display/
-    ├── github_issues/
-    ├── main/
-    ├── orchestrator/
-    ├── prompt_preprocessor/
-    ├── prompt_resolver/
-    ├── pull_request_draft/
-    ├── ralph/
-    ├── repository_context/
-    ├── sandbox_provider/
-    ├── scaffold/
-    ├── setup_config/
-    ├── sync_in/
-    ├── sync_out/
-    ├── test_runner/
-    └── worktree_manager/
 ```
 
 ## Issue Priority
@@ -1199,80 +1133,79 @@ Use this only when human review confirms the PR should close the issue after mer
 close #<issue_number>
 ```
 
-## `.ai-code` Scaffold Files
+## Project Structure
 
-AI Code can create project-specific workflow template files under `.ai-code/`.
-
-Create the scaffold in the current repository:
-
-```powershell
-poetry run ai-coder scaffold --repo-path .
+```text
+ai_coder/
+├── pyproject.toml
+├── poetry.lock
+├── README.md
+├── .ai-code/
+│   ├── .env.example
+│   ├── Dockerfile
+│   ├── README.md
+│   ├── prompts/
+│   │   ├── implementation.md
+│   │   ├── review.md
+│   │   └── merge.md
+│   └── standards/
+│       └── coding-standards.md
+├── .ai_coder/
+│   ├── .env.example
+│   ├── Dockerfile
+│   ├── prompt.md
+│   ├── ai_coder_worktrees/
+│   └── logs/
+├── docker/
+│   └── ralph-test-runtime/
+│       └── Dockerfile
+├── src/
+│   └── ai_coder/
+│       ├── __init__.py
+│       ├── __main__.py
+│       ├── setup_config.py
+│       ├── agent_provider/
+│       ├── codex_preflight/
+│       ├── completion_detector/
+│       ├── display/
+│       ├── github_issues/
+│       ├── main/
+│       ├── orchestrator/
+│       ├── project_setup/
+│       ├── prompt_preprocessor/
+│       ├── prompt_resolver/
+│       ├── pull_request_draft/
+│       ├── ralph/
+│       ├── repository_context/
+│       ├── sandbox_provider/
+│       ├── scaffold/
+│       ├── sync_in/
+│       ├── sync_out/
+│       ├── test_runner/
+│       └── worktree_manager/
+└── tests/
+    ├── agent_provider/
+    ├── codex_preflight/
+    ├── completion_detector/
+    ├── display/
+    ├── github_issues/
+    ├── main/
+    ├── orchestrator/
+    ├── project_setup/
+    ├── prompt_preprocessor/
+    ├── prompt_resolver/
+    ├── pull_request_draft/
+    ├── ralph/
+    ├── repository_context/
+    ├── sandbox_provider/
+    ├── scaffold/
+    ├── setup_config/
+    ├── sync_in/
+    ├── sync_out/
+    ├── test_docs/
+    ├── test_runner/
+    └── worktree_manager/
 ```
-
-Existing files are skipped by default. Use overwrite only when you intentionally want to replace existing scaffold files:
-
-```powershell
-poetry run ai-coder scaffold --repo-path . --overwrite
-```
-
-The scaffold may include:
-
-- `.ai-code/README.md`,
-- `.ai-code/.env.example`,
-- `.ai-code/Dockerfile`,
-- `.ai-code/prompts/implementation.md`,
-- `.ai-code/prompts/review.md`,
-- `.ai-code/prompts/merge.md`,
-- `.ai-code/standards/coding-standards.md`.
-
-Do not put real secrets in `.ai-code/.env.example`.
-
-## scaffold commands
-
-Run the test suite first:
-
-```powershell
-poetry run pytest
-```
-
-Create `.ai-code/` scaffold files in the current repository:
-
-```powershell
-poetry run ai-coder scaffold --repo-path .
-```
-
-Create scaffold files in a safe temporary folder:
-
-```powershell
-mkdir temp_scaffold_check
-poetry run ai-coder scaffold --repo-path temp_scaffold_check
-```
-
-Check the generated scaffold folder:
-
-```powershell
-dir temp_scaffold_check\.ai-code
-type temp_scaffold_check\.ai-code\.env.example
-type temp_scaffold_check\.ai-code\README.md
-type temp_scaffold_check\.ai-code\prompts\implementation.md
-type temp_scaffold_check\.ai-code\prompts\review.md
-type temp_scaffold_check\.ai-code\prompts\merge.md
-type temp_scaffold_check\.ai-code\standards\coding-standards.md
-```
-
-Run scaffold a second time to confirm existing files are skipped:
-
-```powershell
-poetry run ai-coder scaffold --repo-path temp_scaffold_check
-```
-
-Run scaffold with overwrite only when you intentionally want to replace existing scaffold files:
-
-```powershell
-poetry run ai-coder scaffold --repo-path temp_scaffold_check --overwrite
-```
-
-Do not put real secrets in `.ai-code/.env.example`.
 
 ## Troubleshooting
 
@@ -1323,6 +1256,8 @@ Rules for future changes:
 - Do not claim future automation is available before tests prove it.
 - Preserve worktrees when failures or uncommitted changes exist.
 - Keep `setup_config.py` as the final runtime configuration source of truth.
+- Keep Codex-specific output parsing inside `CodexProvider`.
+- Keep Docker-specific mounting and redaction inside the sandbox provider layer.
 
 ## License
 
