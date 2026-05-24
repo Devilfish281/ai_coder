@@ -5955,3 +5955,118 @@ def test_ralph_selects_codex_provider_from_setup_config(
     assert issue_title in codex_stdin_text
     assert issue_body in codex_stdin_text
     assert issue_label in codex_stdin_text
+
+
+def test_ralph_codex_provider_runs_command_through_sandbox_seam(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+    issue_title = "Prove CodexProvider runs through sandbox seam"
+    issue_body = "CodexProvider must send its command through the sandbox handle seam."
+    issue_label = "tracer bullet"
+
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "default_agent",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "codex_command",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "sandbox_mode",
+        "local",
+    )
+
+    codex_command_result = CommandResult(
+        stdout=f"Fake Codex sandbox result.\n{COMPLETE_TOKEN}",
+        stderr="",
+        exit_code=0,
+    )
+
+    sandbox_handle = FakeRalphCodexSandboxHandle(
+        worktree_path,
+        codex_command_result,
+    )
+
+    def fake_sandbox_start(working_directory):
+        assert working_directory == worktree_path
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started fake local sandbox for Codex sandbox seam test.",
+            handle=sandbox_handle,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+
+    display = SilentDisplay()
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=73,
+                title=issue_title,
+                body=issue_body,
+                labels=(issue_label,),
+            )
+        ],
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.orchestrator_result is not None
+    assert result.orchestrator_result.completed is True
+    assert "Fake Codex sandbox result." in result.orchestrator_result.final_output
+    assert COMPLETE_TOKEN in result.orchestrator_result.final_output
+
+    assert len(sandbox_handle.calls) == 1
+    codex_call = sandbox_handle.calls[0]
+    codex_command = codex_call["command"]
+    codex_stdin_text = str(codex_call["stdin_text"])
+
+    assert isinstance(codex_command, list)
+    assert codex_command[:2] == ["codex", "exec"]
+    assert "--cd" in codex_command
+    assert str(worktree_path) in codex_command
+    assert "--sandbox" in codex_command
+    assert "workspace-write" in codex_command
+    assert "--color" in codex_command
+    assert "never" in codex_command
+    assert "--json" in codex_command
+    assert "--output-last-message" in codex_command
+    assert codex_command[-1] == "-"
+
+    # Step 10 — Assert prompt goes through stdin
+    assert issue_title in codex_stdin_text
+    assert issue_body in codex_stdin_text
+    assert issue_label in codex_stdin_text
+
+    # Step 11 — Assert issue text is not in command arguments
+    command_text = " ".join(str(command_part) for command_part in codex_command)
+    assert issue_title not in command_text
+    assert issue_body not in command_text
+    assert issue_label not in command_text
+
+    # Step 12 — Assert the real CodexProvider path was used
+    display_text = _display_messages_as_text(display)
+    assert "Agent provider: CodexProvider" in display_text
