@@ -160,10 +160,17 @@ class CodexProvider:
 
         response_events = _codex_events_from_parse_or_plain_stdout(
             output=output,
+            final_output_path=self.final_output_path,
             structured_parse_result=structured_parse_result,
         )
 
-        if structured_parse_result.malformed:
+        malformed_jsonl_recovered = _codex_malformed_jsonl_recovered_by_trusted_output(
+            output=output,
+            final_output_path=self.final_output_path,
+            structured_parse_result=structured_parse_result,
+        )
+
+        if structured_parse_result.malformed and not malformed_jsonl_recovered:
             return AgentResponse(
                 output=output,
                 error=structured_parse_result.error_text,
@@ -265,6 +272,11 @@ def _codex_output_from_result(
     final_output_path: Path,
     structured_parse_result: _CodexStructuredParseResult | None = None,
 ) -> str:
+    final_output_file_text = _read_text_if_file_exists(final_output_path)
+
+    if final_output_file_text:
+        return final_output_file_text
+
     parse_result = structured_parse_result
     if parse_result is None:
         parse_result = _codex_parse_structured_stdout(stdout_text)
@@ -274,11 +286,6 @@ def _codex_output_from_result(
 
     if not parse_result.structured_output_found:
         return _codex_plain_stdout_output(stdout_text)
-
-    final_output_file_text = _read_text_if_file_exists(final_output_path)
-
-    if final_output_file_text:
-        return final_output_file_text
 
     return stdout_text
 
@@ -414,8 +421,17 @@ def _codex_normalize_event(event: dict[str, Any]) -> AgentProviderEvent:
 def _codex_events_from_parse_or_plain_stdout(
     *,
     output: str,
+    final_output_path: Path,
     structured_parse_result: _CodexStructuredParseResult,
 ) -> tuple[AgentProviderEvent, ...]:
+    final_output_file_text = _read_text_if_file_exists(final_output_path)
+
+    if final_output_file_text and output == final_output_file_text:
+        final_message_event = _codex_synthetic_final_message_file_event(
+            final_output_file_text,
+        )
+        return (*structured_parse_result.events, final_message_event)
+
     if structured_parse_result.structured_output_found:
         return structured_parse_result.events
 
@@ -433,12 +449,40 @@ def _codex_synthetic_text_event(text: str) -> AgentProviderEvent:
     )
 
 
+def _codex_synthetic_final_message_file_event(text: str) -> AgentProviderEvent:
+    return AgentProviderEvent(
+        event_type="final_message_file",
+        text=text,
+        normalized_type=NORMALIZED_EVENT_TYPE_TEXT,
+    )
+
+
 def _codex_synthetic_error_event(text: str) -> AgentProviderEvent:
     return AgentProviderEvent(
         event_type="parse.error",
         text=text,
         normalized_type=NORMALIZED_EVENT_TYPE_ERROR,
     )
+
+
+def _codex_malformed_jsonl_recovered_by_trusted_output(
+    *,
+    output: str,
+    final_output_path: Path,
+    structured_parse_result: _CodexStructuredParseResult,
+) -> bool:
+    if not structured_parse_result.malformed:
+        return False
+
+    if COMPLETE_TOKEN not in output:
+        return False
+
+    final_output_file_text = _read_text_if_file_exists(final_output_path)
+
+    if final_output_file_text and output == final_output_file_text:
+        return True
+
+    return bool(output.strip())
 
 
 def _codex_normalized_type(

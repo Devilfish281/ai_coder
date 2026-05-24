@@ -299,15 +299,18 @@ def test_codex_provider_parses_jsonl_agent_message(tmp_path) -> None:
     assert COMPLETE_TOKEN in result.output
 
 
-def test_codex_provider_prefers_structured_jsonl_over_final_output_file(
+def test_codex_provider_prefers_final_message_file_over_structured_jsonl(
     tmp_path,
 ) -> None:
     final_output_path = tmp_path / "codex-last-message.md"
+    final_message_text = "Final message from file wins.\n<promise>COMPLETE</promise>"
     final_output_path.write_text(
-        "Final message from file should not be used.",
+        final_message_text,
         encoding="utf-8",
     )
-    final_text = "Structured JSONL message wins.\n<promise>COMPLETE</promise>"
+    jsonl_message_text = (
+        "Structured JSONL message should not win.\n<promise>COMPLETE</promise>"
+    )
     stdout = (
         json.dumps(
             {
@@ -321,7 +324,7 @@ def test_codex_provider_prefers_structured_jsonl_over_final_output_file(
                 "type": "item.completed",
                 "item": {
                     "type": "agent_message",
-                    "text": final_text,
+                    "text": jsonl_message_text,
                 },
             }
         )
@@ -344,14 +347,66 @@ def test_codex_provider_prefers_structured_jsonl_over_final_output_file(
     result = provider.i_agent_provider_run("Fix issue #41")
 
     assert result.error is None
-    assert result.output == final_text
-    assert result.output != "Final message from file should not be used."
-    assert len(result.events) == 2
+    assert result.output == final_message_text
+    assert result.output != jsonl_message_text
+    assert len(result.events) >= 2
     assert result.events[0].event_type == "thread.started"
     assert result.events[1].event_type == "item.completed"
     assert result.events[1].item_type == "agent_message"
-    assert result.events[1].text == final_text
+    assert result.events[1].text == jsonl_message_text
     assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_SESSION
+    assert result.events[1].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+
+
+def test_codex_provider_falls_back_to_jsonl_when_final_message_file_is_missing(
+    tmp_path,
+) -> None:
+    missing_final_output_path = tmp_path / "missing-codex-last-message.md"
+    jsonl_message_text = "Structured JSONL fallback.\n<promise>COMPLETE</promise>"
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_067",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": jsonl_message_text,
+                },
+            }
+        )
+        + "\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=missing_final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #67")
+
+    assert result.error is None
+    assert result.output == jsonl_message_text
+    assert len(result.events) == 2
+    assert result.events[0].event_type == "thread.started"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_SESSION
+    assert result.events[0].session_id == "thread_067"
+    assert result.events[1].event_type == "item.completed"
+    assert result.events[1].item_type == "agent_message"
+    assert result.events[1].text == jsonl_message_text
     assert result.events[1].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
 
 
@@ -525,6 +580,51 @@ def test_codex_provider_returns_clear_error_when_first_jsonl_line_is_malformed(
     assert "Malformed Codex structured output" in result.events[0].text
 
 
+def test_codex_provider_uses_final_message_file_when_jsonl_is_malformed(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_message_text = "Trusted final message.\n<promise>COMPLETE</promise>"
+    final_output_path.write_text(
+        final_message_text,
+        encoding="utf-8",
+    )
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_067",
+            }
+        )
+        + "\n"
+        + "{malformed json line\n"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #67")
+
+    assert result.error is None
+    assert result.output == final_message_text
+    assert any(
+        event.event_type == "parse.error"
+        and event.normalized_type == NORMALIZED_EVENT_TYPE_ERROR
+        and "Malformed Codex structured output" in event.text
+        for event in result.events
+    )
+
+
 def test_codex_provider_returns_text_event_for_plain_stdout(tmp_path) -> None:
     sandbox_handle = FakeCodexSandboxHandle(
         CommandResult(
@@ -551,17 +651,19 @@ def test_codex_provider_returns_text_event_for_plain_stdout(tmp_path) -> None:
     assert COMPLETE_TOKEN in result.events[0].text
 
 
-def test_codex_provider_prefers_plain_stdout_when_structured_output_is_unavailable(
+def test_codex_provider_prefers_final_message_file_over_plain_stdout(
     tmp_path,
 ) -> None:
     final_output_path = tmp_path / "codex-last-message.md"
+    final_message_text = "Final message file wins.\n<promise>COMPLETE</promise>"
+    plain_stdout_text = "Plain stdout should not win.\n<promise>COMPLETE</promise>"
     final_output_path.write_text(
-        "Final message file should not hide plain stdout.",
+        final_message_text,
         encoding="utf-8",
     )
     sandbox_handle = FakeCodexSandboxHandle(
         CommandResult(
-            stdout="Plain stdout wins.\n<promise>COMPLETE</promise>",
+            stdout=plain_stdout_text,
             stderr="",
             exit_code=0,
         )
@@ -576,12 +678,14 @@ def test_codex_provider_prefers_plain_stdout_when_structured_output_is_unavailab
     result = provider.i_agent_provider_run("Fix issue #42")
 
     assert result.error is None
-    assert result.output == "Plain stdout wins.\n<promise>COMPLETE</promise>"
-    assert result.output != "Final message file should not hide plain stdout."
-    assert len(result.events) == 1
-    assert result.events[0].event_type == "plain.stdout"
-    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
-    assert result.events[0].text == "Plain stdout wins.\n<promise>COMPLETE</promise>"
+    assert result.output == final_message_text
+    assert result.output != plain_stdout_text
+    assert any(
+        event.event_type == "final_message_file"
+        and event.normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+        and event.text == final_message_text
+        for event in result.events
+    )
 
 
 def test_codex_provider_plain_stdout_completion_reaches_orchestrator(
@@ -613,12 +717,48 @@ def test_codex_provider_plain_stdout_completion_reaches_orchestrator(
     assert result.error is None
 
 
+def test_codex_provider_final_message_file_completion_reaches_orchestrator(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_message_text = "Final message from file.\n<promise>COMPLETE</promise>"
+    final_output_path.write_text(
+        final_message_text,
+        encoding="utf-8",
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Plain stdout without completion.",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = i_orchestrator_run(
+        provider,
+        "Fix issue #42",
+        max_iterations=1,
+    )
+
+    assert result.completed is True
+    assert result.final_output == final_message_text
+    assert COMPLETE_TOKEN in result.final_output
+    assert result.error is None
+
+
 def test_codex_provider_keeps_events_when_final_output_file_is_used(
     tmp_path,
 ) -> None:
     final_output_path = tmp_path / "codex-last-message.md"
+    final_message_text = "Final message from file.\n<promise>COMPLETE</promise>"
     final_output_path.write_text(
-        "Final message from file.\n<promise>COMPLETE</promise>",
+        final_message_text,
         encoding="utf-8",
     )
     stdout = json.dumps({"type": "turn.completed"}) + "\n"
@@ -639,9 +779,47 @@ def test_codex_provider_keeps_events_when_final_output_file_is_used(
     result = provider.i_agent_provider_run("Fix issue #41")
 
     assert result.error is None
-    assert result.output == "Final message from file.\n<promise>COMPLETE</promise>"
-    assert len(result.events) == 1
+    assert result.output == final_message_text
+    assert len(result.events) == 2
     assert result.events[0].event_type == "turn.completed"
+    assert result.events[1].event_type == "final_message_file"
+    assert result.events[1].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+    assert result.events[1].text == final_message_text
+
+
+def test_codex_provider_normalizes_final_message_file_into_text_event(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_message_text = "Normalized final message file.\n<promise>COMPLETE</promise>"
+    final_output_path.write_text(
+        final_message_text,
+        encoding="utf-8",
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Unrelated stdout text.",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #67")
+
+    assert result.error is None
+    assert result.output == final_message_text
+    assert any(
+        event.event_type == "final_message_file"
+        and event.normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+        and event.text == final_message_text
+        for event in result.events
+    )
 
 
 def test_codex_provider_returns_normalized_error_event_from_jsonl(tmp_path) -> None:
@@ -1372,6 +1550,55 @@ def test_codex_provider_does_not_log_raw_full_prompt_by_default(
 
     assert result.error is None
     assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert prompt not in caplog.text
+    assert prompt_marker not in caplog.text
+
+
+def test_codex_provider_does_not_log_raw_full_prompt_when_final_message_file_wins(
+    tmp_path,
+    caplog,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_message_text = "Final message from file.\n<promise>COMPLETE</promise>"
+    final_output_path.write_text(
+        final_message_text,
+        encoding="utf-8",
+    )
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Plain stdout should not win.\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    prompt_marker = "UNIQUE_RAW_PROMPT_MARKER_ISSUE_067_SHOULD_NOT_BE_LOGGED"
+    prompt = (
+        "# GitHub Issue\n\n"
+        "Title: Normalize Codex final message file output\n"
+        "Labels: tracer bullet, codex\n\n"
+        f"{prompt_marker}\n" + _issue_040_large_codex_prompt()
+    )
+
+    with caplog.at_level("INFO"):
+        result = provider.i_agent_provider_run(prompt)
+
+    command = sandbox_handle.calls[0]["command"]
+    command_text = " ".join(command)
+
+    assert result.error is None
+    assert result.output == final_message_text
+    assert sandbox_handle.calls[0]["stdin_text"] == prompt
+    assert prompt not in command
+    assert prompt not in command_text
+    assert prompt_marker not in command_text
     assert prompt not in caplog.text
     assert prompt_marker not in caplog.text
 
