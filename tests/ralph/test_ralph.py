@@ -90,6 +90,32 @@ class FakeRalphAgentSandboxHandle:
         return None
 
 
+class FakeRalphCodexSandboxHandle:
+    def __init__(self, worktree_path, command_result: CommandResult) -> None:
+        self.worktree_path = worktree_path
+        self.working_directory = worktree_path
+        self.command_result = command_result
+        self.calls: list[dict[str, object]] = []
+
+    def i_sandboxhandle_run(
+        self,
+        command: list[str],
+        cwd=None,
+        stdin_text: str = "",
+    ) -> CommandResult:
+        self.calls.append(
+            {
+                "command": command,
+                "cwd": cwd,
+                "stdin_text": stdin_text,
+            }
+        )
+        return self.command_result
+
+    def i_sandboxhandle_close(self) -> None:
+        return None
+
+
 class FakeRalphLogger:
     def __init__(self) -> None:
         self.messages: list[str] = []
@@ -5705,3 +5731,112 @@ def test_ralph_codex_preflight_blocks_sandbox_mismatch_before_worktree_creation(
     assert "docker" in result.message
     assert "Phase: preflight" in display.messages
     assert result.message in display.messages
+
+
+def test_ralph_returns_failed_and_preserves_worktree_when_codex_exits_nonzero_with_complete_token(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+    stdout_text = f"Codex partial stdout says complete.\n{COMPLETE_TOKEN}"
+    stderr_text = "Codex crashed after partial output."
+    codex_command_result = CommandResult(
+        stdout=stdout_text,
+        stderr=stderr_text,
+        exit_code=6,
+    )
+    sandbox_handle = FakeRalphCodexSandboxHandle(
+        worktree_path,
+        codex_command_result,
+    )
+
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "default_agent",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "codex_command",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "sandbox_mode",
+        "local",
+    )
+
+    def fake_sandbox_start(working_directory):
+        assert working_directory == worktree_path
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started fake local sandbox for Codex non-zero exit test.",
+            handle=sandbox_handle,
+        )
+
+    def fail_sync_out_merge(*args, **kwargs):
+        raise AssertionError(
+            "i_sync_out_merge() should not be called after Codex exits non-zero."
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fail_sync_out_merge,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=71,
+                title="Enforce Codex non-zero exit code failure",
+                body=(
+                    "Codex output may contain the completion token, but RALPH "
+                    "must fail when the Codex command exits non-zero."
+                ),
+                labels=("tracer bullet",),
+            )
+        ],
+        repo_path=tmp_path,
+    )
+
+    assert result.status == RALPH_STATUS_FAILED
+    assert result.completed is False
+    assert result.orchestrator_result is not None
+    assert result.orchestrator_result.completed is False
+    assert result.orchestrator_result.error is not None
+    assert stderr_text in result.orchestrator_result.error
+    assert result.sync_result is None
+    assert result.cleanup_result is not None
+    assert result.cleanup_result.preserved is True
+    assert result.cleanup_result.removed is False
+    assert stderr_text in result.message
+    assert "Preserved worktree:" in result.message
+
+    assert len(sandbox_handle.calls) == 1
+    codex_call = sandbox_handle.calls[0]
+    codex_command = codex_call["command"]
+    codex_stdin_text = str(codex_call["stdin_text"])
+
+    assert isinstance(codex_command, list)
+    assert codex_command[:2] == ["codex", "exec"]
+    assert "--output-last-message" in codex_command
+    assert codex_command[-1] == "-"
+    assert "Enforce Codex non-zero exit code failure" not in codex_command
+    assert "Codex output may contain the completion token" not in codex_command
+    assert "tracer bullet" not in codex_command
+    assert "Enforce Codex non-zero exit code failure" in codex_stdin_text
+    assert "Codex output may contain the completion token" in codex_stdin_text
