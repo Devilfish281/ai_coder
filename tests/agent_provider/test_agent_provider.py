@@ -538,9 +538,13 @@ def test_codex_provider_returns_clear_error_for_malformed_jsonl(tmp_path) -> Non
     result = provider.i_agent_provider_run("Fix issue #43")
 
     assert result.output == stdout
+    assert COMPLETE_TOKEN not in result.output
     assert result.error is not None
     assert "Malformed Codex structured output" in result.error
     assert "line 2" in result.error
+    assert result.stdout == stdout
+    assert result.stderr == ""
+    assert result.exit_code == 0
     assert len(result.events) == 2
     assert result.events[0].event_type == "thread.started"
     assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_SESSION
@@ -571,9 +575,13 @@ def test_codex_provider_returns_clear_error_when_first_jsonl_line_is_malformed(
     result = provider.i_agent_provider_run("Fix issue #41")
 
     assert result.output == stdout
+    assert COMPLETE_TOKEN not in result.output
     assert result.error is not None
     assert "Malformed Codex structured output" in result.error
     assert "line 1" in result.error
+    assert result.stdout == stdout
+    assert result.stderr == ""
+    assert result.exit_code == 0
     assert len(result.events) == 1
     assert result.events[0].event_type == "parse.error"
     assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_ERROR
@@ -617,6 +625,153 @@ def test_codex_provider_uses_final_message_file_when_jsonl_is_malformed(
 
     assert result.error is None
     assert result.output == final_message_text
+    assert COMPLETE_TOKEN in result.output
+    assert result.stdout == stdout
+    assert result.stderr == ""
+    assert result.exit_code == 0
+    assert any(
+        event.event_type == "final_message_file"
+        and event.normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+        and event.text == final_message_text
+        for event in result.events
+    )
+    assert any(
+        event.event_type == "parse.error"
+        and event.normalized_type == NORMALIZED_EVENT_TYPE_ERROR
+        and "Malformed Codex structured output" in event.text
+        for event in result.events
+    )
+
+
+def test_codex_provider_recovers_from_malformed_jsonl_when_stdout_fallback_has_complete_token(
+    tmp_path,
+) -> None:
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_070",
+            }
+        )
+        + "\n"
+        + "{malformed json line\n"
+        + f"Recovered through stdout fallback.\n{COMPLETE_TOKEN}"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #70")
+
+    assert result.error is None
+    assert result.output == stdout
+    assert COMPLETE_TOKEN in result.output
+    assert result.stdout == stdout
+    assert result.stderr == ""
+    assert result.exit_code == 0
+    assert any(
+        event.event_type == "parse.error"
+        and event.normalized_type == NORMALIZED_EVENT_TYPE_ERROR
+        and "Malformed Codex structured output" in event.text
+        for event in result.events
+    )
+
+
+def test_codex_provider_malformed_jsonl_stdout_fallback_completion_reaches_orchestrator(
+    tmp_path,
+) -> None:
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_070",
+            }
+        )
+        + "\n"
+        + "{malformed json line\n"
+        + f"Recovered through orchestrator.\n{COMPLETE_TOKEN}"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = i_orchestrator_run(
+        provider,
+        "Fix issue #70",
+        max_iterations=1,
+    )
+
+    assert result.completed is True
+    assert result.error is None
+    assert result.final_output == stdout
+    assert COMPLETE_TOKEN in result.final_output
+    assert any(
+        event.event_type == "parse.error"
+        and event.normalized_type == NORMALIZED_EVENT_TYPE_ERROR
+        and "Malformed Codex structured output" in event.text
+        for event in result.events
+    )
+
+
+def test_codex_provider_nonzero_exit_still_fails_when_malformed_jsonl_has_completion_fallback(
+    tmp_path,
+) -> None:
+    stdout = (
+        json.dumps(
+            {
+                "type": "thread.started",
+                "thread_id": "thread_070",
+            }
+        )
+        + "\n"
+        + "{malformed json line\n"
+        + f"Partial stdout fallback.\n{COMPLETE_TOKEN}"
+    )
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout,
+            stderr="Codex failed",
+            exit_code=1,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #70")
+
+    assert result.error is not None
+    assert "Codex failed" in result.error
+    assert result.output == stdout
+    assert COMPLETE_TOKEN in result.output
+    assert result.stdout == stdout
+    assert result.stderr == "Codex failed"
+    assert result.exit_code == 1
+    assert "Codex failed" in result.diagnostics
+    assert "Exit code: 1." in result.diagnostics
     assert any(
         event.event_type == "parse.error"
         and event.normalized_type == NORMALIZED_EVENT_TYPE_ERROR
