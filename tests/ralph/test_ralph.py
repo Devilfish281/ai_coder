@@ -5596,3 +5596,112 @@ def test_ralph_result_exposes_test_result_when_final_tests_fail(
     assert result.test_result.stdout == "test stdout"
     assert result.test_result.stderr == "pytest failed"
     assert result.test_result.exit_code == 1
+
+
+def _fail_unexpected_codex_preflight_side_effect(seam_name: str):
+    def fail_side_effect(*args, **kwargs):
+        raise AssertionError(
+            f"{seam_name} should not be called during Codex preflight."
+        )
+
+    return fail_side_effect
+
+
+def _patch_codex_preflight_no_side_effect_sentinels(monkeypatch) -> None:
+    no_call_seams = (
+        "_resolve_issue_source",
+        "i_github_issue_select_actionable",
+        "i_worktree_create",
+        "i_sandbox_start",
+        "i_project_setup_run",
+        "i_repository_context_discover",
+        "i_prompt_resolve",
+        "i_prompt_preprocess",
+        "i_agent_provider_create",
+        "i_orchestrator_run",
+        "i_test_runner_run",
+        "i_sync_out_merge",
+        "i_pull_request_draft_build",
+        "i_github_issue_close",
+        "i_worktree_cleanup",
+    )
+
+    for seam_name in no_call_seams:
+        monkeypatch.setattr(
+            ralph_module,
+            seam_name,
+            _fail_unexpected_codex_preflight_side_effect(seam_name),
+        )
+
+
+def test_ralph_codex_preflight_blocks_provider_mismatch_before_worktree_creation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_codex_preflight_no_side_effect_sentinels(monkeypatch)
+
+    monkeypatch.setattr(ralph_module.setup_config, "default_agent", "mock")
+    monkeypatch.setattr(ralph_module.setup_config, "sandbox_mode", "local")
+
+    display = SilentDisplay()
+
+    result = i_ralph_run(
+        require_codex_preflight=True,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    assert result.status == RALPH_STATUS_BLOCKED
+    assert result.completed is False
+    assert result.selected_issue is None
+    assert result.prompt == ""
+    assert result.orchestrator_result is None
+    assert result.project_setup_result is None
+    assert result.test_result is None
+    assert result.sync_result is None
+    assert result.cleanup_result is None
+    assert result.pull_request_draft_result is None
+    assert result.issue_close_result is None
+    assert "RALPH_AGENT" in result.message
+    assert "codex" in result.message
+    assert "mock" in result.message
+    assert "Phase: preflight" in display.messages
+    assert result.message in display.messages
+
+
+def test_ralph_codex_preflight_blocks_sandbox_mismatch_before_worktree_creation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_codex_preflight_no_side_effect_sentinels(monkeypatch)
+
+    monkeypatch.setattr(ralph_module.setup_config, "default_agent", "codex")
+    monkeypatch.setattr(ralph_module.setup_config, "sandbox_mode", "docker")
+    monkeypatch.setattr(ralph_module.setup_config, "codex_command", "codex")
+
+    display = SilentDisplay()
+
+    result = i_ralph_run(
+        require_codex_preflight=True,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    assert result.status == RALPH_STATUS_BLOCKED
+    assert result.completed is False
+    assert result.selected_issue is None
+    assert result.prompt == ""
+    assert result.orchestrator_result is None
+    assert result.project_setup_result is None
+    assert result.test_result is None
+    assert result.sync_result is None
+    assert result.cleanup_result is None
+    assert result.pull_request_draft_result is None
+    assert result.issue_close_result is None
+    assert "RALPH_SANDBOX_MODE" in result.message
+    assert "local" in result.message
+    assert "docker" in result.message
+    assert "Phase: preflight" in display.messages
+    assert result.message in display.messages
