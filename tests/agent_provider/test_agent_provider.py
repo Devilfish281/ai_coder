@@ -910,6 +910,122 @@ def test_codex_provider_falls_back_to_plain_stdout(tmp_path) -> None:
     assert result.output == "Plain stdout result.\n<promise>COMPLETE</promise>"
 
 
+def test_codex_provider_stdout_fallback_exposes_command_result_data(tmp_path) -> None:
+    missing_final_output_path = tmp_path / "missing-codex-last-message.md"
+    stdout_text = "Plain stdout result.\n<promise>COMPLETE</promise>"
+    stderr_text = "codex warning: partial diagnostic"
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout_text,
+            stderr=stderr_text,
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=missing_final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #69")
+
+    assert result.error is None
+    assert result.output == stdout_text
+    assert COMPLETE_TOKEN in result.output
+    assert result.stdout == stdout_text
+    assert result.stderr == stderr_text
+    assert result.exit_code == 0
+    assert stderr_text in result.diagnostics
+    assert stderr_text not in result.output
+    assert len(result.events) == 1
+    assert result.events[0].event_type == "plain.stdout"
+    assert result.events[0].normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+
+
+def test_codex_provider_does_not_treat_stderr_as_completion_output(tmp_path) -> None:
+    stderr_text = f"stderr-only diagnostic {COMPLETE_TOKEN}"
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="",
+            stderr=stderr_text,
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #69")
+
+    assert result.error is None
+    assert result.output == ""
+    assert COMPLETE_TOKEN not in result.output
+    assert result.stdout == ""
+    assert result.stderr == stderr_text
+    assert COMPLETE_TOKEN in result.diagnostics
+    assert all(event.event_type != "plain.stdout" for event in result.events)
+
+
+def test_codex_provider_uses_stdout_not_stderr_when_jsonl_is_missing(tmp_path) -> None:
+    stdout_text = "Plain stdout fallback wins.\n<promise>COMPLETE</promise>"
+    stderr_text = "stderr diagnostic should not become output"
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout_text,
+            stderr=stderr_text,
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #69")
+
+    assert result.error is None
+    assert result.output == stdout_text
+    assert result.output != stderr_text
+    assert result.stderr == stderr_text
+    assert stderr_text in result.diagnostics
+
+
+def test_codex_provider_preserves_diagnostics_when_nonzero_exit_has_stdout_completion(
+    tmp_path,
+) -> None:
+    stdout_text = "Plain stdout says complete.\n<promise>COMPLETE</promise>"
+    stderr_text = "codex failed after partial output"
+    nonzero_exit_code = 5
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout_text,
+            stderr=stderr_text,
+            exit_code=nonzero_exit_code,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #69")
+
+    assert result.output == stdout_text
+    assert result.error == stderr_text
+    assert result.stdout == stdout_text
+    assert result.stderr == stderr_text
+    assert result.exit_code == nonzero_exit_code
+    assert stderr_text in result.diagnostics
+
+
 def test_codex_provider_returns_error_on_nonzero_exit(tmp_path) -> None:
     sandbox_handle = FakeCodexSandboxHandle(
         CommandResult(

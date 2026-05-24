@@ -32,6 +32,10 @@ class AgentResponse:
     output: str
     error: str | None = None
     events: tuple[AgentProviderEvent, ...] = ()
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+    diagnostics: str = ""
 
 
 @dataclass(frozen=True)
@@ -149,7 +153,18 @@ class CodexProvider:
             command,
             stdin_text=prompt,
         )
+
         stdout_text = str(getattr(command_result, "stdout", ""))
+        stderr_text = str(getattr(command_result, "stderr", ""))
+        exit_code = _codex_normalize_exit_code(
+            getattr(command_result, "exit_code", None)
+        )
+        diagnostics = _codex_diagnostics_from_command_result(
+            stderr_text=stderr_text,
+            stdout_text=stdout_text,
+            exit_code=exit_code,
+        )
+
         structured_parse_result = _codex_parse_structured_stdout(stdout_text)
 
         output = _codex_output_from_result(
@@ -175,12 +190,20 @@ class CodexProvider:
                 output=output,
                 error=structured_parse_result.error_text,
                 events=response_events,
+                stdout=stdout_text,
+                stderr=stderr_text,
+                exit_code=exit_code,
+                diagnostics=diagnostics,
             )
 
         if getattr(command_result, "succeeded", False):
             return AgentResponse(
                 output=output,
                 events=response_events,
+                stdout=stdout_text,
+                stderr=stderr_text,
+                exit_code=exit_code,
+                diagnostics=diagnostics,
             )
 
         return AgentResponse(
@@ -191,6 +214,10 @@ class CodexProvider:
                 structured_parse_result=structured_parse_result,
             ),
             events=response_events,
+            stdout=stdout_text,
+            stderr=stderr_text,
+            exit_code=exit_code,
+            diagnostics=diagnostics,
         )
 
 
@@ -646,6 +673,40 @@ def _codex_error_message(
         return plain_stdout_text
 
     return f"Codex exited with code {exit_code}."
+
+
+def _codex_diagnostics_from_command_result(
+    *,
+    stderr_text: str,
+    stdout_text: str,
+    exit_code: int | str | None,
+) -> str:
+    diagnostic_parts: list[str] = []
+    cleaned_stderr_text = stderr_text.strip()
+
+    if cleaned_stderr_text:
+        diagnostic_parts.append(cleaned_stderr_text)
+
+    normalized_exit_code = _codex_normalize_exit_code(exit_code)
+
+    if normalized_exit_code is not None and normalized_exit_code != 0:
+        diagnostic_parts.append(f"Exit code: {normalized_exit_code}.")
+        cleaned_stdout_text = stdout_text.strip()
+
+        if not cleaned_stderr_text and cleaned_stdout_text:
+            diagnostic_parts.append(f"Stdout: {cleaned_stdout_text}")
+
+    return "\n".join(diagnostic_parts).strip()
+
+
+def _codex_normalize_exit_code(exit_code: int | str | None) -> int | None:
+    if exit_code is None:
+        return None
+
+    try:
+        return int(exit_code)
+    except (TypeError, ValueError):
+        return None
 
 
 def _codex_error_from_jsonl(stdout_text: str) -> str:
