@@ -179,6 +179,24 @@ class CodexProvider:
             structured_parse_result=structured_parse_result,
         )
 
+        command_succeeded = _codex_command_result_succeeded(  #
+            command_result=command_result,  #
+            exit_code=exit_code,  #
+        )  #
+
+        if not command_succeeded:  #
+            return _codex_failed_command_response(  #
+                command_result=command_result,  #
+                output=output,  #
+                response_events=response_events,  #
+                stdout_text=stdout_text,  #
+                stderr_text=stderr_text,  #
+                exit_code=exit_code,  #
+                diagnostics=diagnostics,  #
+                final_output_path=self.final_output_path,  #
+                structured_parse_result=structured_parse_result,  #
+            )  #
+
         malformed_jsonl_recovered = _codex_malformed_jsonl_recovered_by_trusted_output(
             output=output,
             final_output_path=self.final_output_path,
@@ -196,23 +214,8 @@ class CodexProvider:
                 diagnostics=diagnostics,
             )
 
-        if getattr(command_result, "succeeded", False):
-            return AgentResponse(
-                output=output,
-                events=response_events,
-                stdout=stdout_text,
-                stderr=stderr_text,
-                exit_code=exit_code,
-                diagnostics=diagnostics,
-            )
-
         return AgentResponse(
             output=output,
-            error=_codex_error_message(
-                command_result=command_result,
-                final_output_path=self.final_output_path,
-                structured_parse_result=structured_parse_result,
-            ),
             events=response_events,
             stdout=stdout_text,
             stderr=stderr_text,
@@ -510,6 +513,44 @@ def _codex_malformed_jsonl_recovered_by_trusted_output(
         return True
 
     return bool(output.strip())
+
+
+def _codex_command_result_succeeded(
+    *,
+    command_result: Any,
+    exit_code: int | None,
+) -> bool:
+    if exit_code is not None:
+        return exit_code == 0
+
+    return bool(getattr(command_result, "succeeded", False))
+
+
+def _codex_failed_command_response(
+    *,
+    command_result: Any,
+    output: str,
+    response_events: tuple[AgentProviderEvent, ...],
+    stdout_text: str,
+    stderr_text: str,
+    exit_code: int | None,
+    diagnostics: str,
+    final_output_path: Path,
+    structured_parse_result: _CodexStructuredParseResult,
+) -> AgentResponse:
+    return AgentResponse(
+        output=output,
+        error=_codex_error_message(
+            command_result=command_result,
+            final_output_path=final_output_path,
+            structured_parse_result=structured_parse_result,
+        ),
+        events=response_events,
+        stdout=stdout_text,
+        stderr=stderr_text,
+        exit_code=exit_code,
+        diagnostics=diagnostics,
+    )
 
 
 def _codex_normalized_type(

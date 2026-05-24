@@ -1179,6 +1179,7 @@ def test_codex_provider_preserves_diagnostics_when_nonzero_exit_has_stdout_compl
     assert result.stderr == stderr_text
     assert result.exit_code == nonzero_exit_code
     assert stderr_text in result.diagnostics
+    assert f"Exit code: {nonzero_exit_code}." in result.diagnostics
 
 
 def test_codex_provider_returns_error_on_nonzero_exit(tmp_path) -> None:
@@ -1872,6 +1873,133 @@ def test_codex_provider_does_not_log_raw_full_prompt_when_final_message_file_win
     assert prompt_marker not in command_text
     assert prompt not in caplog.text
     assert prompt_marker not in caplog.text
+
+
+def test_codex_provider_nonzero_exit_fails_even_when_final_message_has_complete_token(
+    tmp_path,
+) -> None:
+    final_output_path = tmp_path / "codex-last-message.md"
+    final_message_text = f"Final message says complete.\n{COMPLETE_TOKEN}"
+    stdout_text = "Codex stdout before crash."
+    stderr_text = "Codex crashed after partial output."
+    nonzero_exit_code = 2
+
+    final_output_path.write_text(
+        final_message_text,
+        encoding="utf-8",
+    )
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout_text,
+            stderr=stderr_text,
+            exit_code=nonzero_exit_code,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=final_output_path,
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #71")
+
+    assert result.error is not None
+    assert result.error == stderr_text
+    assert result.output == final_message_text
+    assert COMPLETE_TOKEN in result.output
+    assert result.stdout == stdout_text
+    assert result.stderr == stderr_text
+    assert result.exit_code == nonzero_exit_code
+    assert stderr_text in result.diagnostics
+    assert "Exit code: 2." in result.diagnostics
+
+
+def test_codex_provider_nonzero_exit_fails_even_when_jsonl_has_complete_token(
+    tmp_path,
+) -> None:
+    jsonl_message_text = f"Structured JSONL says complete.\n{COMPLETE_TOKEN}"
+    stdout_text = (
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "status": "completed",
+                    "text": jsonl_message_text,
+                },
+            }
+        )
+        + "\n"
+    )
+    stderr_text = "Codex crashed after structured output."
+    nonzero_exit_code = 3
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout_text,
+            stderr=stderr_text,
+            exit_code=nonzero_exit_code,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = provider.i_agent_provider_run("Fix issue #71")
+
+    assert result.error is not None
+    assert result.error == stderr_text
+    assert result.output == jsonl_message_text
+    assert COMPLETE_TOKEN in result.output
+    assert result.stdout == stdout_text
+    assert result.stderr == stderr_text
+    assert result.exit_code == nonzero_exit_code
+    assert stderr_text in result.diagnostics
+    assert "Exit code: 3." in result.diagnostics
+    assert any(
+        event.event_type == "item.completed"
+        and event.normalized_type == NORMALIZED_EVENT_TYPE_TEXT
+        and event.text == jsonl_message_text
+        for event in result.events
+    )
+
+
+def test_codex_provider_nonzero_exit_completion_does_not_reach_orchestrator_success(
+    tmp_path,
+) -> None:
+    stdout_text = f"Plain stdout says complete.\n{COMPLETE_TOKEN}"
+    stderr_text = "Codex failed after partial completion output."
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=stdout_text,
+            stderr=stderr_text,
+            exit_code=4,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "missing-codex-last-message.md",
+    )
+
+    result = i_orchestrator_run(
+        provider,
+        "Fix issue #71",
+        max_iterations=1,
+    )
+
+    assert result.completed is False
+    assert result.error is not None
+    assert stderr_text in result.error
+    assert result.outputs == ()
+    assert result.final_output == ""
 
 
 def test_agent_provider_create_codex_passes_large_prompt_through_stdin(
