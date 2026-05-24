@@ -6070,3 +6070,197 @@ def test_ralph_codex_provider_runs_command_through_sandbox_seam(
     # Step 12 — Assert the real CodexProvider path was used
     display_text = _display_messages_as_text(display)
     assert "Agent provider: CodexProvider" in display_text
+
+
+def test_ralph_codex_prompt_delivery_uses_stdin_for_inert_issue_text(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_project_setup(monkeypatch)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_passing_test_runner(monkeypatch)
+    _patch_successful_sync_merge(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+
+    issue_title = 'ISSUE_074_TITLE_MARKER "quoted title"'
+    issue_label = "ISSUE_074_LABEL_MARKER"
+    windows_path_marker = (
+        r"C:\Users\ME\Documents\Python\2026\Projects\ai_coder\ISSUE_074_PATH_MARKER"
+    )
+    windows_path_with_spaces_marker = (
+        r"C:\Users\ME\Documents\Python\2026\Projects\ai coder with spaces"
+        r"\ISSUE_074_PATH_WITH_SPACES"
+    )
+    double_quote_marker = '"quoted ISSUE_074 text"'
+    single_quote_marker = "'single quoted ISSUE_074 text'"
+    semicolon_marker = "; Write-Output unsafe"
+    pipe_marker = "| whoami"
+    ampersand_marker = "&& echo unsafe"
+    backtick_marker = "`echo unsafe`"
+    powershell_marker = "$(Write-Output unsafe)"
+    posix_shell_marker = "printf unsafe && ls ./not-real"
+
+    repeated_issue_body_text = (
+        "ISSUE_074_BODY_MARKER proves this long issue body stays in stdin.\n"
+        f"Windows path marker: {windows_path_marker}\n"
+        f"Windows path with spaces marker: {windows_path_with_spaces_marker}\n"
+        f"Double quote marker: {double_quote_marker}\n"
+        f"Single quote marker: {single_quote_marker}\n"
+        f"Semicolon marker: {semicolon_marker}\n"
+        f"Pipe marker: {pipe_marker}\n"
+        f"Ampersand marker: {ampersand_marker}\n"
+        f"Backtick marker: {backtick_marker}\n"
+        f"PowerShell-looking marker: {powershell_marker}\n"
+        f"POSIX-looking marker: {posix_shell_marker}\n"
+    )
+    issue_body = repeated_issue_body_text * 12
+
+    prompt_template = (
+        "# Issue 074 prompt delivery proof\n\n"
+        "Issue number: {{ISSUE_NUMBER}}\n"
+        "Issue title: {{ISSUE_TITLE}}\n"
+        "Issue labels: {{ISSUE_LABELS}}\n"
+        "Worktree path: {{WORKTREE_PATH}}\n"
+        "Completion token: {{COMPLETE_TOKEN}}\n\n"
+        "Issue body:\n"
+        "{{ISSUE_BODY}}\n"
+    )
+
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "default_agent",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "codex_command",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "sandbox_mode",
+        "local",
+    )
+
+    codex_command_result = CommandResult(
+        stdout=f"Fake Codex stdin delivery result.\n{COMPLETE_TOKEN}",
+        stderr="",
+        exit_code=0,
+    )
+
+    sandbox_handle = FakeRalphCodexSandboxHandle(
+        worktree_path,
+        codex_command_result,
+    )
+
+    def fake_sandbox_start(working_directory):
+        assert working_directory == worktree_path
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started fake local sandbox for Codex stdin delivery test.",
+            handle=sandbox_handle,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+
+    display = SilentDisplay()
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=74,
+                title=issue_title,
+                body=issue_body,
+                labels=("tracer bullet", issue_label),
+            )
+        ],
+        prompt_template=prompt_template,
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.orchestrator_result is not None
+    assert result.orchestrator_result.completed is True
+
+    assert issue_title in result.prompt
+    assert "ISSUE_074_BODY_MARKER" in result.prompt
+    assert issue_label in result.prompt
+    assert windows_path_marker in result.prompt
+    assert windows_path_with_spaces_marker in result.prompt
+    assert double_quote_marker in result.prompt
+    assert single_quote_marker in result.prompt
+    assert semicolon_marker in result.prompt
+    assert pipe_marker in result.prompt
+    assert ampersand_marker in result.prompt
+    assert backtick_marker in result.prompt
+    assert powershell_marker in result.prompt
+    assert posix_shell_marker in result.prompt
+
+    assert len(sandbox_handle.calls) == 1
+    codex_call = sandbox_handle.calls[0]
+    codex_command = codex_call["command"]
+    codex_stdin_text = str(codex_call["stdin_text"])
+
+    assert isinstance(codex_command, list)
+    assert codex_command[:2] == ["codex", "exec"]
+    assert "--cd" in codex_command
+    assert str(worktree_path) in codex_command
+    assert "--sandbox" in codex_command
+    assert "workspace-write" in codex_command
+    assert "--color" in codex_command
+    assert "never" in codex_command
+    assert "--json" in codex_command
+    assert "--output-last-message" in codex_command
+    assert codex_command[-1] == "-"
+
+    assert codex_stdin_text == result.prompt
+    assert issue_title in codex_stdin_text
+    assert "ISSUE_074_BODY_MARKER" in codex_stdin_text
+    assert issue_label in codex_stdin_text
+    assert windows_path_marker in codex_stdin_text
+    assert windows_path_with_spaces_marker in codex_stdin_text
+    assert double_quote_marker in codex_stdin_text
+    assert single_quote_marker in codex_stdin_text
+    assert semicolon_marker in codex_stdin_text
+    assert pipe_marker in codex_stdin_text
+    assert ampersand_marker in codex_stdin_text
+    assert backtick_marker in codex_stdin_text
+    assert powershell_marker in codex_stdin_text
+    assert posix_shell_marker in codex_stdin_text
+
+    command_text = " ".join(str(command_part) for command_part in codex_command)
+
+    unsafe_command_markers = (
+        issue_title,
+        issue_body,
+        issue_label,
+        result.prompt,
+        windows_path_marker,
+        windows_path_with_spaces_marker,
+        double_quote_marker,
+        single_quote_marker,
+        semicolon_marker,
+        pipe_marker,
+        ampersand_marker,
+        backtick_marker,
+        powershell_marker,
+        posix_shell_marker,
+    )
+
+    for unsafe_command_marker in unsafe_command_markers:
+        assert unsafe_command_marker not in command_text
+
+    display_text = _display_messages_as_text(display)
+    assert "Agent provider: CodexProvider" in display_text
