@@ -4,7 +4,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai_coder.display import SilentDisplay, i_display_scaffold_result
-from ai_coder.scaffold import i_scaffold_create
+
+
+from ai_coder.scaffold import (
+    CODEX_SMOKE_ARTIFACT_RELATIVE_PATHS,
+    CODEX_SMOKE_CHECKLIST_RELATIVE_PATH,
+    CODEX_SMOKE_INVOCATION_DECISION,
+    CODEX_SMOKE_INVOCATION_STYLE,
+    CODEX_SMOKE_PROMPT_RELATIVE_PATH,
+    i_scaffold_create,
+)
+
+
 from ai_coder.setup_config import DEFAULT_DOCKER_IMAGE_NAME
 
 EXPECTED_SCAFFOLD_FILES = (
@@ -14,8 +25,117 @@ EXPECTED_SCAFFOLD_FILES = (
     ".ai-code/prompts/implementation.md",
     ".ai-code/prompts/review.md",
     ".ai-code/prompts/merge.md",
+    CODEX_SMOKE_PROMPT_RELATIVE_PATH.as_posix(),
+    CODEX_SMOKE_CHECKLIST_RELATIVE_PATH.as_posix(),
     ".ai-code/standards/coding-standards.md",
 )
+
+
+def test_codex_smoke_issue078_locks_manual_invocation_style_and_artifact_paths() -> (
+    None
+):
+    decision_text = CODEX_SMOKE_INVOCATION_DECISION.casefold()
+    prompt_path_text = CODEX_SMOKE_PROMPT_RELATIVE_PATH.as_posix()
+    checklist_path_text = CODEX_SMOKE_CHECKLIST_RELATIVE_PATH.as_posix()
+    artifact_path_texts = {
+        artifact_path.as_posix()
+        for artifact_path in CODEX_SMOKE_ARTIFACT_RELATIVE_PATHS
+    }
+
+    assert CODEX_SMOKE_INVOCATION_STYLE == "documented_manual_command"
+    assert "documented manual command" in decision_text
+    assert "existing cli" in decision_text
+    assert "setup configuration values" in decision_text
+    assert "do not add a new cli flag" in decision_text
+    assert "pull request creation" in decision_text
+    assert "github issue closing" in decision_text
+    assert "future automation" in decision_text
+
+    assert prompt_path_text == ".ai-code/prompts/codex_smoke_test.md"
+    assert checklist_path_text == ".ai-code/checklists/codex_smoke_test_checklist.md"
+    assert artifact_path_texts == {prompt_path_text, checklist_path_text}
+    assert len(artifact_path_texts) == 2
+    assert not checklist_path_text.startswith(".ai-code/prompts/")
+
+
+def test_scaffold_create_generates_codex_smoke_artifacts(
+    tmp_path: Path,
+) -> None:
+    result = i_scaffold_create(tmp_path)
+
+    generated_paths = {
+        file_result.relative_path.as_posix() for file_result in result.files
+    }
+
+    assert CODEX_SMOKE_PROMPT_RELATIVE_PATH.as_posix() in generated_paths
+    assert CODEX_SMOKE_CHECKLIST_RELATIVE_PATH.as_posix() in generated_paths
+    assert (tmp_path / CODEX_SMOKE_PROMPT_RELATIVE_PATH).is_file()
+    assert (tmp_path / CODEX_SMOKE_CHECKLIST_RELATIVE_PATH).is_file()
+    assert CODEX_SMOKE_PROMPT_RELATIVE_PATH != CODEX_SMOKE_CHECKLIST_RELATIVE_PATH
+
+
+def test_codex_smoke_prompt_template_guides_issue_49_safely(
+    tmp_path: Path,
+) -> None:
+    i_scaffold_create(tmp_path)
+
+    prompt_text = (tmp_path / CODEX_SMOKE_PROMPT_RELATIVE_PATH).read_text(
+        encoding="utf-8"
+    )
+
+    expected_phrases = (
+        "AI Code",
+        "Issue #49",
+        "startup log",
+        "all caps",
+        "Do not create a pull request",
+        "Do not close a GitHub issue",
+        "inert prompt text",
+        "<promise>COMPLETE</promise>",
+    )
+
+    forbidden_phrases = (
+        "gh issue close",
+        "gh pr create",
+        "!`",
+    )
+
+    for expected_phrase in expected_phrases:
+        assert expected_phrase in prompt_text
+
+    for forbidden_phrase in forbidden_phrases:
+        assert forbidden_phrase not in prompt_text
+
+
+def test_codex_smoke_checklist_grades_real_worktree_flow(
+    tmp_path: Path,
+) -> None:
+    i_scaffold_create(tmp_path)
+
+    checklist_text = (tmp_path / CODEX_SMOKE_CHECKLIST_RELATIVE_PATH).read_text(
+        encoding="utf-8"
+    )
+
+    expected_phrases = (
+        "AI Code",
+        "setup_config.py",
+        "CodexProvider",
+        "local",
+        "Issue #49",
+        "tracer bullet",
+        ".ai_coder/ai_coder_worktrees/",
+        "stdin",
+        "baseline pytest",
+        "final pytest",
+        "commit hash",
+        "dry-run",
+        "preserved",
+        "No pull request",
+        "No GitHub issue",
+    )
+
+    for expected_phrase in expected_phrases:
+        assert expected_phrase in checklist_text
 
 
 def test_scaffold_create_creates_ai_code_folder_and_files(tmp_path: Path) -> None:
@@ -26,6 +146,7 @@ def test_scaffold_create_creates_ai_code_folder_and_files(tmp_path: Path) -> Non
     assert scaffold_root.exists()
     assert scaffold_root.is_dir()
     assert (scaffold_root / "prompts").is_dir()
+    assert (scaffold_root / "checklists").is_dir()
     assert (scaffold_root / "standards").is_dir()
 
     for relative_file_path in EXPECTED_SCAFFOLD_FILES:
@@ -51,12 +172,23 @@ def test_scaffold_readme_documents_safe_extension_points(tmp_path: Path) -> None
         "prompts/implementation.md",
         "prompts/review.md",
         "prompts/merge.md",
+        "prompts/codex_smoke_test.md",
+        "checklists/codex_smoke_test_checklist.md",
         "standards/coding-standards.md",
         "extension points",
         "safe extension",
         "Do not store real secrets",
         "Existing files are skipped",
         "overwrite",
+        "Codex smoke proof",
+        "The prompt tells Codex what to do",
+        "The checklist tells the developer how to grade the real-worktree smoke proof",
+        ".ai_coder/ai_coder_worktrees/",
+        "must not create a pull request",
+        "must not close a GitHub issue",
+        "must not create a PR",
+        "must not close a GitHub issue",
+        "does not claim the future smoke proof is fully automated",
     )
 
     for expected_phrase in expected_phrases:
@@ -185,6 +317,7 @@ def test_scaffold_create_generates_prompt_templates_with_safe_placeholders(
         tmp_path / ".ai-code" / "prompts" / "implementation.md",
         tmp_path / ".ai-code" / "prompts" / "review.md",
         tmp_path / ".ai-code" / "prompts" / "merge.md",
+        tmp_path / CODEX_SMOKE_PROMPT_RELATIVE_PATH,  #  Added Code
     )
     prompt_texts = tuple(
         prompt_path.read_text(encoding="utf-8") for prompt_path in prompt_paths
@@ -242,6 +375,7 @@ def test_scaffold_prompt_templates_do_not_include_real_secrets_or_command_expans
         tmp_path / ".ai-code" / "prompts" / "implementation.md",
         tmp_path / ".ai-code" / "prompts" / "review.md",
         tmp_path / ".ai-code" / "prompts" / "merge.md",
+        tmp_path / CODEX_SMOKE_PROMPT_RELATIVE_PATH,  #  Added Code
     )
     combined_prompt_text = "\n".join(
         prompt_path.read_text(encoding="utf-8") for prompt_path in prompt_paths
