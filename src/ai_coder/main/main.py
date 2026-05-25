@@ -231,6 +231,7 @@ def main(
         display=ConsoleDisplay(
             secret_values=setup_config.i_setup_config_secret_values(),
         ),
+        require_codex_preflight=setup_config.default_agent == "codex",
     )
 
     _write_info("#" * 80, use_logger=use_logger_t)
