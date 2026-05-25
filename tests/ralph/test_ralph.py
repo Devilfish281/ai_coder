@@ -6500,3 +6500,386 @@ def test_ralph_codex_command_args_keep_issue_content_and_prompt_out_of_args(
 
     display_text = _display_messages_as_text(display)
     assert "Agent provider: CodexProvider" in display_text
+
+
+def test_ralph_mocked_codex_full_loop_success_runs_tests_commits_and_cleans_up(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+
+    worktree_path = tmp_path / "worktree"
+    expected_worktree_path = worktree_path
+    codex_marker_path = worktree_path / "mock_codex_success_marker.txt"
+    expected_issue_title = "Add mocked Codex full-loop success proof"  #  Changed Code
+    expected_issue_body = "Prove mocked Codex can complete through the public RALPH loop."  #  Changed Code  #  Changed Code  #  Changed Code
+    expected_issue_label = "tracer bullet"  #  Changed Code
+
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "default_agent",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "codex_command",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "sandbox_mode",
+        "local",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "dry_run",
+        True,
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "github_issue_close_enabled",
+        False,
+    )
+
+    phase_order: list[str] = []
+    expected_phase_order = [
+        "baseline_tests",
+        "codex",
+        "final_tests",
+        "sync",
+        "cleanup",
+    ]
+
+    def fake_project_setup_run(  #  Changed Code
+        worktree_path,  #  Changed Code
+        sandbox_handle,
+    ) -> ProjectSetupResult:
+        assert worktree_path == expected_worktree_path  #  Changed Code
+        assert sandbox_handle is not None
+        assert phase_order == []
+        assert not codex_marker_path.exists()
+        phase_order.append("baseline_tests")
+
+        return ProjectSetupResult(
+            poetry_project=True,
+            install_ran=True,
+            install_passed=True,
+            baseline_tests_ran=True,
+            baseline_tests_passed=True,
+            blocked=False,
+            install_command=("poetry", "install"),
+            install_stdout="fake poetry install passed",
+            install_stderr="",
+            install_exit_code=0,
+            baseline_test_command=("poetry", "run", "pytest"),
+            baseline_test_stdout="fake baseline pytest passed",
+            baseline_test_stderr="",
+            baseline_test_exit_code=0,
+            message="Fake project setup passed before mocked Codex.",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_project_setup_run",
+        fake_project_setup_run,
+    )
+
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+
+    fake_codex_output = (
+        "Fake Codex completed issue 076.\n"
+        "Created mock_codex_success_marker.txt.\n"
+        f"{COMPLETE_TOKEN}"
+    )
+
+    class FakeIssue076CodexSandboxHandle:
+        def __init__(self, sandbox_worktree_path) -> None:
+            self.worktree_path = sandbox_worktree_path
+            self.working_directory = sandbox_worktree_path
+            self.calls: list[dict[str, object]] = []
+
+        def i_sandboxhandle_run(
+            self,
+            command: list[str],
+            cwd=None,
+            stdin_text: str = "",
+        ) -> CommandResult:
+            assert phase_order == ["baseline_tests"]
+
+            self.calls.append(
+                {
+                    "command": command,
+                    "cwd": cwd,
+                    "stdin_text": stdin_text,
+                }
+            )
+            phase_order.append("codex")
+
+            self.worktree_path.mkdir(parents=True, exist_ok=True)
+            codex_marker_path.write_text(
+                "Mock Codex made a visible worktree change.\n",
+                encoding="utf-8",
+            )
+
+            assert "--output-last-message" in command
+            output_last_message_index = command.index("--output-last-message")
+            final_message_path = (
+                self.worktree_path / ".ai_coder" / "codex-last-message.md"
+            )
+            assert command[output_last_message_index + 1] == str(final_message_path)
+
+            final_message_path.parent.mkdir(parents=True, exist_ok=True)
+            final_message_path.write_text(
+                fake_codex_output,
+                encoding="utf-8",
+            )
+
+            return CommandResult(
+                stdout=fake_codex_output,
+                stderr="",
+                exit_code=0,
+            )
+
+        def i_sandboxhandle_close(self) -> None:
+            return None
+
+    issue076_sandbox_handle = FakeIssue076CodexSandboxHandle(worktree_path)
+
+    def fake_sandbox_start(working_directory):
+        assert working_directory == expected_worktree_path
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started fake local sandbox for issue 076 Codex success proof.",
+            handle=issue076_sandbox_handle,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ) -> TestRunResult:
+        assert sandbox_handle is issue076_sandbox_handle
+        assert command == ("poetry", "run", "pytest")
+        assert phase_order == ["baseline_tests", "codex"]
+        assert codex_marker_path.exists()
+        phase_order.append("final_tests")
+
+        return TestRunResult(
+            passed=True,
+            command=("poetry", "run", "pytest"),
+            message="Fake final pytest passed after mocked Codex.",
+            stdout="fake final pytest passed",
+            stderr="",
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    def fake_sync_out_merge(
+        completed: bool,
+        worktree_path=None,
+        issue_number=None,
+        issue_title="",
+        commit_message_template=None,
+    ) -> SyncMergeResult:
+        assert completed is True
+        assert worktree_path == expected_worktree_path
+        assert issue_number == 76
+        assert issue_title == expected_issue_title  #  Changed Code
+        assert (
+            commit_message_template == ralph_module.setup_config.commit_message_template
+        )
+        assert phase_order == ["baseline_tests", "codex", "final_tests"]
+        assert codex_marker_path.exists()
+        phase_order.append("sync")
+
+        return SyncMergeResult(
+            merged=True,
+            committed=True,
+            failed=False,
+            commit_hash="issue-076-mocked-codex-commit",
+            worktree_path=expected_worktree_path,
+            has_changes=True,
+            has_uncommitted_changes=False,
+            message="Commit created: issue-076-mocked-codex-commit",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sync_out_merge",
+        fake_sync_out_merge,
+    )
+
+    def fake_worktree_cleanup(
+        repo_path,
+        worktree_path,
+        completed,
+        has_uncommitted_changes=None,
+    ) -> WorktreeCleanupResult:
+        assert repo_path == tmp_path
+        assert worktree_path == expected_worktree_path
+        assert completed is True
+        assert not has_uncommitted_changes
+        assert phase_order == [
+            "baseline_tests",
+            "codex",
+            "final_tests",
+            "sync",
+        ]
+        assert codex_marker_path.exists()
+        phase_order.append("cleanup")
+
+        return WorktreeCleanupResult(
+            worktree_path=expected_worktree_path,
+            removed=True,
+            preserved=False,
+            reason="removed_clean_worktree",
+            message=f"Removed clean worktree: {expected_worktree_path}",
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_worktree_cleanup",
+        fake_worktree_cleanup,
+    )
+
+    assert worktree_path == tmp_path / "worktree"
+    assert not codex_marker_path.exists()
+    assert expected_issue_title == "Add mocked Codex full-loop success proof"
+    assert (
+        expected_issue_body
+        == "Prove mocked Codex can complete through the public RALPH loop."
+    )
+    assert expected_issue_label == "tracer bullet"
+    assert ralph_module.setup_config.default_agent == "codex"
+    assert ralph_module.setup_config.codex_command == "codex"
+    assert ralph_module.setup_config.sandbox_mode == "local"
+    assert ralph_module.setup_config.dry_run is True
+    assert ralph_module.setup_config.github_issue_close_enabled is False
+    assert phase_order == []
+    assert issue076_sandbox_handle.calls == []
+    assert expected_phase_order == [
+        "baseline_tests",
+        "codex",
+        "final_tests",
+        "sync",
+        "cleanup",
+    ]
+
+    display = SilentDisplay()
+    issue = GitHubIssue(
+        number=76,
+        title=expected_issue_title,
+        body=expected_issue_body,
+        labels=(expected_issue_label,),
+    )
+
+    result = i_ralph_run(
+        issues=[issue],
+        repo_path=tmp_path,
+        display=display,
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.selected_issue is not None
+    assert result.selected_issue.number == 76
+    assert result.selected_issue.title == expected_issue_title
+    assert result.orchestrator_result is not None
+    assert result.orchestrator_result.completed is True
+    assert COMPLETE_TOKEN in result.orchestrator_result.final_output
+    assert codex_marker_path.exists()
+    assert "issue-076-mocked-codex-commit" in result.message
+
+    assert phase_order == expected_phase_order
+    assert len(issue076_sandbox_handle.calls) == 1
+
+    recorded_call = issue076_sandbox_handle.calls[0]
+    codex_command = list(recorded_call["command"])
+    stdin_text = str(recorded_call["stdin_text"])
+
+    assert codex_command[:2] == ["codex", "exec"]
+    assert codex_command[-1] == "-"
+
+    safe_command_pieces = (
+        "--cd",
+        str(worktree_path),
+        "--sandbox",
+        "workspace-write",
+        "--color",
+        "never",
+        "--json",
+        "--output-last-message",
+        "-",
+    )
+
+    for safe_command_piece in safe_command_pieces:
+        assert safe_command_piece in codex_command
+
+    output_last_message_index = codex_command.index("--output-last-message")
+    assert codex_command[output_last_message_index + 1] == str(
+        worktree_path / ".ai_coder" / "codex-last-message.md"
+    )
+
+    command_text = " ".join(str(command_part) for command_part in codex_command)
+
+    assert stdin_text == result.prompt
+    assert expected_issue_title in stdin_text
+    assert expected_issue_body in stdin_text
+    assert expected_issue_label in stdin_text
+    assert expected_issue_title not in codex_command
+    assert expected_issue_body not in codex_command
+    assert expected_issue_label not in codex_command
+    assert expected_issue_title not in command_text
+    assert expected_issue_body not in command_text
+    assert expected_issue_label not in command_text
+    assert result.prompt not in command_text
+
+    assert result.project_setup_result is not None
+    assert result.project_setup_result.baseline_tests_ran is True
+    assert result.project_setup_result.baseline_tests_passed is True
+
+    assert result.test_result is not None
+    assert result.test_result.passed is True
+    assert result.test_result.command == ("poetry", "run", "pytest")
+
+    assert result.sync_result is not None
+    assert result.sync_result.committed is True
+    assert result.sync_result.merged is True
+    assert result.sync_result.failed is False
+    assert result.sync_result.commit_hash == "issue-076-mocked-codex-commit"
+    assert result.sync_result.has_changes is True
+    assert result.sync_result.has_uncommitted_changes is False
+
+    assert result.cleanup_result is not None
+    assert result.cleanup_result.removed is True
+    assert result.cleanup_result.preserved is False
+    assert result.cleanup_result.reason == "removed_clean_worktree"
+
+    assert result.pull_request_draft_result is not None
+    assert result.pull_request_draft_result.created is False
+    assert result.pull_request_draft_result.future_disabled is True
+
+    assert result.issue_close_result is not None
+    assert result.issue_close_result.closed is False
+    assert (
+        result.issue_close_result.dry_run is True
+        or result.issue_close_result.future_disabled is True
+    )
+
+    display_text = _display_messages_as_text(display)
+    assert "Agent provider: CodexProvider" in display_text
+    assert "No pull request was created." in display_text
+    assert "No GitHub issue was closed." in display_text
