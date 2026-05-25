@@ -224,7 +224,7 @@ def i_repository_start(repo_path: str | Path | None = None) -> RepositoryStartRe
 
     detected_repo_root = Path(repo_root_text)
     logger.info("Detected Git repository root: %s", detected_repo_root)
-
+    # Run Git inside this repository folder and tell me the current branch name.
     branch_result = _run_git_command(
         [
             "git",
@@ -252,7 +252,7 @@ def i_repository_start(repo_path: str | Path | None = None) -> RepositoryStartRe
             detected_repo_root,
             "Repository is in detached HEAD state.",
         )
-
+    # Check whether this Git repository has uncommitted changes.
     clean_state_result = _check_clean_state(detected_repo_root)
 
     if not clean_state_result.succeeded:
