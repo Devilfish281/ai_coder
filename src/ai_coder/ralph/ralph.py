@@ -718,6 +718,12 @@ def i_ralph_run(
 
     sync_committed = bool(sync_result and sync_result.committed)
     sync_failed = bool(sync_result and sync_result.failed)
+    sync_has_changes = bool(sync_result and sync_result.has_changes)
+    sync_allows_cleanup = bool(
+        sync_result
+        and not sync_failed
+        and (sync_result.merged or (allow_no_changes and not sync_has_changes))
+    )
     sync_commit_hash = sync_result.commit_hash if sync_result else ""
     sync_has_uncommitted_changes = (
         True if sync_result and sync_result.has_uncommitted_changes else None
@@ -744,6 +750,7 @@ def i_ralph_run(
         and test_result.passed
         and sync_committed
         and not sync_failed
+        and not sync_has_uncommitted_changes
         else RALPH_STATUS_FAILED
     )
 
@@ -810,10 +817,7 @@ def i_ralph_run(
     i_display_phase(active_display, "cleanup")
 
     cleanup_completed = (
-        orchestrator_result.completed
-        and test_result.passed
-        and sync_result is not None
-        and not sync_failed
+        orchestrator_result.completed and test_result.passed and sync_allows_cleanup
     )
 
     cleanup_has_uncommitted_changes = sync_has_uncommitted_changes
@@ -1172,6 +1176,9 @@ def _status_from_run_results(
         return RALPH_STATUS_FAILED
 
     if sync_result.failed:
+        return RALPH_STATUS_FAILED
+
+    if code_changes_detected:
         return RALPH_STATUS_FAILED
 
     if sync_result.merged:
