@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
@@ -14,6 +15,17 @@ NORMALIZED_EVENT_TYPE_TOOL_CALL = "tool_call"
 NORMALIZED_EVENT_TYPE_RESULT = "result"
 NORMALIZED_EVENT_TYPE_ERROR = "error"
 NORMALIZED_EVENT_TYPE_SESSION = "session"
+
+
+_PROVIDER_BASE_ENVIRONMENT_NAMES: tuple[str, ...] = (
+    "PATH",
+    "PATHEXT",
+    "SystemRoot",
+    "COMSPEC",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+)
 
 
 @dataclass(frozen=True)
@@ -64,6 +76,8 @@ def i_agent_provider_create(
     worktree_path: str | Path,
     codex_command: str = "",
     final_output_path: str | Path | None = None,
+    provider_env_allowlist: object = (),
+    provider_secret_env_allowlist: object = (),
 ) -> AgentProvider:
     """Create an agent provider from the public provider-selection seam.
 
@@ -85,12 +99,90 @@ def i_agent_provider_create(
             codex_command=codex_command,
             worktree_path=worktree_path,
             final_output_path=final_output_path,
+            provider_env_allowlist=provider_env_allowlist,
+            provider_secret_env_allowlist=provider_secret_env_allowlist,
         )
 
     raise ValueError(
         "Unsupported agent provider "
         f"{provider_name!r}. Supported providers are: mock, codex."
     )
+
+
+def _normalized_env_name_tuple(env_names: object) -> tuple[str, ...]:
+    normalized_names: list[str] = []
+    seen_names: set[str] = set()
+
+    raw_names = (env_names,) if isinstance(env_names, str) else env_names or ()
+
+    for env_name in raw_names:
+        cleaned_name = str(env_name).strip()
+
+        if not cleaned_name or cleaned_name in seen_names:
+            continue
+
+        seen_names.add(cleaned_name)
+        normalized_names.append(cleaned_name)
+
+    return tuple(normalized_names)
+
+
+def _copy_existing_environment_values(
+    *,
+    target_environment: dict[str, str],
+    source_environment: Mapping[str, str],
+    env_names: object,
+) -> None:
+    for env_name in _normalized_env_name_tuple(env_names):
+        env_value = source_environment.get(env_name)
+
+        if env_value is None:
+            continue
+
+        cleaned_value = str(env_value).strip().strip("'\"")
+
+        if not cleaned_value:
+            continue
+
+        target_environment[env_name] = cleaned_value
+
+
+def _provider_secret_missing_message(env_name: str) -> str:
+    return "Missing required provider secret environment variable: " f"{env_name}."
+
+
+def _build_provider_environment(
+    *,
+    provider_env_allowlist: object = (),
+    provider_secret_env_allowlist: object = (),
+    source_environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    environment_source = (
+        os.environ if source_environment is None else source_environment
+    )
+    provider_environment: dict[str, str] = {}
+
+    _copy_existing_environment_values(
+        target_environment=provider_environment,
+        source_environment=environment_source,
+        env_names=_PROVIDER_BASE_ENVIRONMENT_NAMES,
+    )
+    _copy_existing_environment_values(
+        target_environment=provider_environment,
+        source_environment=environment_source,
+        env_names=provider_env_allowlist,
+    )
+
+    for env_name in _normalized_env_name_tuple(provider_secret_env_allowlist):
+        env_value = environment_source.get(env_name)
+        cleaned_value = "" if env_value is None else str(env_value).strip().strip("'\"")
+
+        if not cleaned_value:
+            raise ValueError(_provider_secret_missing_message(env_name))
+
+        provider_environment[env_name] = cleaned_value
+
+    return provider_environment
 
 
 @dataclass(frozen=True)
@@ -123,6 +215,8 @@ class CodexProvider:
         codex_command: str,
         worktree_path: str | Path,
         final_output_path: str | Path | None = None,
+        provider_env_allowlist: object = (),
+        provider_secret_env_allowlist: object = (),
     ) -> None:
         cleaned_codex_command = codex_command.strip()
 
@@ -141,6 +235,10 @@ class CodexProvider:
             worktree_path=self.worktree_path,
             final_output_path=self.final_output_path,
         )
+        self.provider_env_allowlist = _normalized_env_name_tuple(provider_env_allowlist)
+        self.provider_secret_env_allowlist = _normalized_env_name_tuple(
+            provider_secret_env_allowlist
+        )
         self.prompts: list[str] = []
         self.run_count = 0
 
@@ -149,9 +247,20 @@ class CodexProvider:
         self.run_count += 1
 
         command = self.command_contract.i_codex_command_contract_build()
+        sandbox_run_kwargs: dict[str, object] = {
+            "stdin_text": prompt,
+        }
+
+        if self.provider_env_allowlist or self.provider_secret_env_allowlist:
+            provider_environment = _build_provider_environment(
+                provider_env_allowlist=self.provider_env_allowlist,
+                provider_secret_env_allowlist=self.provider_secret_env_allowlist,
+            )
+            sandbox_run_kwargs["environment"] = provider_environment
+
         command_result = self.sandbox_handle.i_sandboxhandle_run(
             command,
-            stdin_text=prompt,
+            **sandbox_run_kwargs,
         )
 
         stdout_text = str(getattr(command_result, "stdout", ""))
@@ -179,23 +288,23 @@ class CodexProvider:
             structured_parse_result=structured_parse_result,
         )
 
-        command_succeeded = _codex_command_result_succeeded(  #
-            command_result=command_result,  #
-            exit_code=exit_code,  #
-        )  #
+        command_succeeded = _codex_command_result_succeeded(
+            command_result=command_result,
+            exit_code=exit_code,
+        )
 
-        if not command_succeeded:  #
-            return _codex_failed_command_response(  #
-                command_result=command_result,  #
-                output=output,  #
-                response_events=response_events,  #
-                stdout_text=stdout_text,  #
-                stderr_text=stderr_text,  #
-                exit_code=exit_code,  #
-                diagnostics=diagnostics,  #
-                final_output_path=self.final_output_path,  #
-                structured_parse_result=structured_parse_result,  #
-            )  #
+        if not command_succeeded:
+            return _codex_failed_command_response(
+                command_result=command_result,
+                output=output,
+                response_events=response_events,
+                stdout_text=stdout_text,
+                stderr_text=stderr_text,
+                exit_code=exit_code,
+                diagnostics=diagnostics,
+                final_output_path=self.final_output_path,
+                structured_parse_result=structured_parse_result,
+            )
 
         malformed_jsonl_recovered = _codex_malformed_jsonl_recovered_by_trusted_output(
             output=output,

@@ -349,7 +349,7 @@ Development should stay tracer-bullet focused:
 
 AI Code is a Python learning project for building **RALPH**, a safe coding-agent workflow that works through one GitHub issue at a time.
 
-The current codebase has moved beyond the first tiny mock-only slice. The default path is still the safe Release 1 local tracer bullet, but the project now also has tested extension seams for Docker bind-mount execution, scaffold generation, GitHub issue safety metadata, Codex preflight checks, and CodexProvider output normalization.
+The current codebase has moved beyond the first tiny mock-only slice. The default path is still the safe Release 1 local tracer bullet, but the project now also has tested extension seams for Docker bind-mount execution, scaffold generation, GitHub issue safety metadata, Codex preflight checks, CodexProvider output normalization, and provider-specific environment allowlists.
 
 The safest way to think about the project is:
 
@@ -361,6 +361,7 @@ Optional extension paths:
 Docker bind-mount sandbox
 CodexProvider command adapter
 Codex final-message-file and JSONL output handling
+Provider-specific environment allowlists for Codex commands
 dry-run GitHub PR / issue-close metadata
 .ai-code scaffold templates
 ```
@@ -506,6 +507,83 @@ The current checks can verify:
 
 Preflight should not create providers, start sandboxes, create worktrees, call models, commit changes, create pull requests, or close GitHub issues.
 
+## Provider-Specific Environment Support
+
+Provider-specific environment support is now documented as a small Codex-focused tracer-bullet slice.
+
+The purpose is to let `CodexProvider` receive only explicitly allowed provider environment variables while leaving normal project commands unchanged.
+
+Use normal provider allowlists for non-secret values:
+
+```text
+RALPH_PROVIDER_ENV_ALLOWLIST=CODEX_HOME
+```
+
+Use secret provider allowlists for secret values:
+
+```text
+RALPH_PROVIDER_SECRET_ENV_ALLOWLIST=OPENAI_API_KEY
+```
+
+Important behavior:
+
+- `setup_config.provider_env_allowlist` controls normal provider environment names.
+- `setup_config.provider_secret_env_allowlist` controls secret provider environment names.
+- Missing normal provider environment variables are skipped.
+- Missing or empty provider secret environment variables produce a clear error.
+- `CodexProvider` passes the provider environment only to the Codex sandbox command.
+- `FakeTestAgentProvider` does not receive the Codex/provider environment.
+- `poetry install`, `poetry run pytest`, `git`, project setup, sync, and commit commands do not receive the Codex/provider environment.
+- Codex prompt text still goes through stdin.
+- Codex command arguments stay focused on safe provider command pieces and do not receive issue bodies or prompt text.
+- `OPENAI_API_KEY` is not included by default. Add it only when a real Codex workflow explicitly needs it.
+
+This keeps the provider environment path narrow and testable. It does not make the whole local sandbox use a restricted environment by default.
+
+## Step 19 Manual Acceptance Checklist
+
+Verification command completed:
+
+```powershell
+poetry run pytest
+```
+
+Result reported by the developer:
+
+```text
+All tests passed.
+```
+
+Completed checklist:
+
+- [x] `LocalSandboxProvider.i_sandboxhandle_run()` accepts an optional custom environment.
+- [x] Local sandbox commands with no custom environment still behave like before.
+- [x] A local sandbox command with a custom environment does not inherit unallowed host env vars.
+- [x] Provider normal env vars come from `setup_config.provider_env_allowlist`.
+- [x] Provider secret env vars come from `setup_config.provider_secret_env_allowlist`.
+- [x] Missing normal provider env vars are skipped.
+- [x] Missing secret provider env vars produce a clear error.
+- [x] `CodexProvider` passes the custom provider environment to the sandbox.
+- [x] `FakeTestAgentProvider` does not pass the Codex/provider environment.
+- [x] `pytest` commands do not receive the provider-specific custom environment.
+- [x] `git` or sync/commit commands do not receive the provider-specific custom environment.
+- [x] Codex prompt still goes through stdin.
+- [x] Codex command arguments stay unchanged except for internal sandbox keyword arguments.
+- [x] No new dependencies were added.
+
+Simple commit message:
+
+```text
+RALPH: document provider environment support
+```
+
+Suggested commit commands:
+
+```powershell
+git add README.md
+git commit -m "RALPH: document provider environment support"
+```
+
 ## What Is Intentionally Future Work
 
 The following features are not automatic Release 1 behavior:
@@ -563,18 +641,20 @@ The expected configuration flow is:
 
 Useful user-facing configuration values include:
 
-| Name                               | Purpose                                                                                             |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `REPO_PATH`                        | Local repository path RALPH should use.                                                             |
-| `PROMPT_PATH`                      | Prompt markdown file path.                                                                          |
-| `GITHUB_REPO`                      | GitHub owner/repository name.                                                                       |
-| `RALPH_AGENT`                      | Agent provider name. Use `mock` for the default local tracer bullet or `codex` for Codex testing.   |
-| `RALPH_SANDBOX_MODE`               | Sandbox mode. Use `local` for the default path or `docker` when testing Docker bind-mount behavior. |
-| `TEST_COMMAND`                     | Test command, defaulting to `poetry run pytest`.                                                    |
-| `DRY_RUN`                          | Safety mode for future GitHub automation.                                                           |
-| `CODEX_COMMAND`                    | Codex command path or name when using the optional Codex provider path.                             |
-| `RALPH_DOCKER_IMAGE_NAME`          | Docker image name for Docker sandbox testing.                                                       |
-| `RALPH_GITHUB_ISSUE_CLOSE_ENABLED` | Future issue-close enablement flag. Real issue closing is still disabled or placeholder behavior.   |
+| Name                                  | Purpose                                                                                             |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `REPO_PATH`                           | Local repository path RALPH should use.                                                             |
+| `PROMPT_PATH`                         | Prompt markdown file path.                                                                          |
+| `GITHUB_REPO`                         | GitHub owner/repository name.                                                                       |
+| `RALPH_AGENT`                         | Agent provider name. Use `mock` for the default local tracer bullet or `codex` for Codex testing.   |
+| `RALPH_SANDBOX_MODE`                  | Sandbox mode. Use `local` for the default path or `docker` when testing Docker bind-mount behavior. |
+| `TEST_COMMAND`                        | Test command, defaulting to `poetry run pytest`.                                                    |
+| `DRY_RUN`                             | Safety mode for future GitHub automation.                                                           |
+| `CODEX_COMMAND`                       | Codex command path or name when using the optional Codex provider path.                             |
+| `RALPH_PROVIDER_ENV_ALLOWLIST`        | Normal provider environment variable names allowed for provider commands such as Codex.             |
+| `RALPH_PROVIDER_SECRET_ENV_ALLOWLIST` | Secret provider environment variable names allowed for provider commands such as Codex.             |
+| `RALPH_DOCKER_IMAGE_NAME`             | Docker image name for Docker sandbox testing.                                                       |
+| `RALPH_GITHUB_ISSUE_CLOSE_ENABLED`    | Future issue-close enablement flag. Real issue closing is still disabled or placeholder behavior.   |
 
 CLI values should be validated before they change runtime configuration.
 
@@ -861,6 +941,7 @@ Release 1 focuses on proving this end-to-end path locally. Docker, Codex, automa
 - CodexProvider can fall back to plain stdout when output is not structured JSONL.
 - CodexProvider preserves non-zero exit behavior.
 - Codex preflight can verify provider, sandbox, executable, prompt input, issue input, PR safety, and issue-close safety.
+- Provider-specific environment allowlists are documented and verified for the Codex command path.
 - PR creation is represented only as future/disabled draft metadata.
 - GitHub issue closing is represented only as future/disabled or dry-run placeholder behavior.
 - `.ai-code/` scaffold templates can be generated.

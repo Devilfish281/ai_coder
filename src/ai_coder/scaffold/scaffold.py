@@ -587,6 +587,7 @@ poetry run ai-coder --agent codex --sandbox local --dry-run --issue-number 49 --
 - [ ] The worktree is under `.ai_coder/ai_coder_worktrees/`.
 - [ ] The main project working tree is not edited directly.
 - [ ] The preserved or removed worktree path is visible in output.
+- [ ] The worktree is under `.ai_coder/ai_coder_worktrees/`.
 
 ## Codex command-safety checks
 

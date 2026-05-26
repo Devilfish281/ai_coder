@@ -1,4 +1,5 @@
 # tests/sandbox_provider/test_sandbox_provider.py
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -109,6 +110,74 @@ def test_local_sandbox_provider_does_not_put_stdin_text_in_command_arguments(
     assert result.exit_code == 0
     assert result.stdout.strip() == stdin_text
     assert stdin_text not in command_text
+
+
+def test_local_sandbox_provider_uses_custom_environment_without_inheriting_unallowed_host_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    sandbox = LocalSandboxProvider(tmp_path)
+
+    monkeypatch.setenv(
+        "RALPH_LOCAL_SANDBOX_UNALLOWED_ENV",
+        "host secret should not leak",
+    )
+
+    custom_environment = _minimal_child_process_environment()
+    custom_environment["RALPH_LOCAL_SANDBOX_ALLOWED_ENV"] = "allowed child value"
+
+    result = sandbox.i_sandboxhandle_run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os; "
+                "print(os.getenv('RALPH_LOCAL_SANDBOX_ALLOWED_ENV', '<missing>')); "
+                "print(os.getenv('RALPH_LOCAL_SANDBOX_UNALLOWED_ENV', '<missing>'))"
+            ),
+        ],
+        environment=custom_environment,
+    )
+
+    output_lines = result.stdout.strip().splitlines()
+
+    assert result.exit_code == 0
+    assert result.succeeded is True
+    assert result.failed is False
+    assert result.stderr == ""
+    assert output_lines == [
+        "allowed child value",
+        "<missing>",
+    ]
+
+
+def test_local_sandbox_provider_keeps_default_environment_inheritance_when_no_custom_environment(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    sandbox = LocalSandboxProvider(tmp_path)
+
+    monkeypatch.setenv(
+        "RALPH_LOCAL_SANDBOX_DEFAULT_ENV_VISIBLE",
+        "default env is visible",
+    )
+
+    result = sandbox.i_sandboxhandle_run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os; "
+                "print(os.getenv('RALPH_LOCAL_SANDBOX_DEFAULT_ENV_VISIBLE', '<missing>'))"
+            ),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.succeeded is True
+    assert result.failed is False
+    assert result.stderr == ""
+    assert result.stdout.strip() == "default env is visible"
 
 
 def test_local_sandbox_provider_returns_nonzero_exit_code(tmp_path) -> None:
@@ -2215,3 +2284,23 @@ def _run_git_command(
     )
 
     return completed_process
+
+
+def _minimal_child_process_environment() -> dict[str, str]:
+    environment: dict[str, str] = {}
+
+    for env_name in (
+        "PATH",
+        "PATHEXT",
+        "SystemRoot",
+        "COMSPEC",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+    ):
+        env_value = os.environ.get(env_name, "")
+
+        if env_value:
+            environment[env_name] = env_value
+
+    return environment

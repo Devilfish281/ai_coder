@@ -53,6 +53,7 @@ Notes:
 
 from __future__ import annotations
 
+
 import os
 import subprocess
 from dataclasses import dataclass
@@ -272,12 +273,14 @@ class LocalSandboxProvider:
         command: list[str],
         cwd: Path | None = None,
         stdin_text: str = "",
+        environment: dict[str, str] | None = None,
     ) -> CommandResult:
         """Run a command locally.
 
         :param command: Command and arguments to execute.
         :param cwd: Optional host-side working directory.
         :param stdin_text: Optional text passed to the command through stdin.
+        :param environment: Optional child-process environment mapping.
         :return: Captured command result.
         :raises ValueError: If ``command`` is empty.
         """
@@ -300,6 +303,9 @@ class LocalSandboxProvider:
 
         if stdin_text:
             run_kwargs["input"] = stdin_text
+
+        if environment is not None:
+            run_kwargs["env"] = environment
 
         try:
             completed_process = subprocess.run(
@@ -378,6 +384,7 @@ class DockerSandboxProvider:
         command: list[str],
         cwd: Path | None = None,
         stdin_text: str = "",
+        environment: dict[str, str] | None = None,
     ) -> CommandResult:
         """Run one command inside Docker.
 
@@ -387,6 +394,8 @@ class DockerSandboxProvider:
         :param command: Command and arguments to run inside Docker.
         :param cwd: Optional host-side or relative working directory.
         :param stdin_text: Optional text passed to the Docker command through stdin.
+        :param environment: Accepted for sandbox seam compatibility. Docker env
+            behavior remains controlled by Docker env allowlist helpers.
         :return: Captured command result.
         :raises ValueError: If ``command`` is empty.
         """
@@ -413,7 +422,7 @@ class DockerSandboxProvider:
 
         redacted_docker_command = i_dockercommand_redact(
             docker_command,
-            _configured_secret_env_names(),  #  Changed Code
+            _configured_secret_env_names(),
         )
 
         logger.debug(
