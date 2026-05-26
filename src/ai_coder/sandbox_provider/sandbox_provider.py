@@ -159,16 +159,53 @@ class SandboxHandle(Protocol):
         command: list[str],
         cwd: Path | None = None,
         stdin_text: str = "",
+        environment: dict[str, str] | None = None,
     ) -> CommandResult:
-        """Run a command through the sandbox.
+        """Run a command locally.
 
         :param command: Command and arguments to execute.
-        :param cwd: Optional working directory.
+        :param cwd: Optional host-side working directory.
         :param stdin_text: Optional text passed to the command through stdin.
+        :param environment: Optional environment mapping for the child process.
         :return: Captured command result.
+        :raises ValueError: If ``command`` is empty.
         """
 
-        raise NotImplementedError
+        _validate_command(command)
+
+        run_cwd = cwd or self.worktree_path
+        logger.debug(
+            "Running local sandbox command. cwd=%s command=%s",
+            run_cwd,
+            command,
+        )
+
+        run_kwargs = {
+            "cwd": run_cwd,
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+
+        if stdin_text:
+            run_kwargs["input"] = stdin_text
+
+        if environment is not None:
+            run_kwargs["env"] = environment
+
+        try:
+            completed_process = subprocess.run(
+                command,
+                **run_kwargs,
+            )
+        except OSError as error:
+            result = _command_result_from_os_error(error)
+            _log_command_result("local", command, result)
+            return result
+
+        result = _command_result_from_completed_process(completed_process)
+        _log_command_result("local", command, result)
+        return result
 
     def i_sandboxhandle_close(self) -> None:
         """Close or clean up the sandbox handle.
