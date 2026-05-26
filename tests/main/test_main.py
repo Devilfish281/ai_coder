@@ -408,6 +408,7 @@ def test_main_accepts_codex_agent_when_codex_command_is_configured(
         prompt_path=None,
         repo_path=None,
         display=None,
+        require_codex_preflight=False,
     ):
         return SimpleNamespace(
             selected_issue=SimpleNamespace(
@@ -644,6 +645,7 @@ def test_main_docker_sandbox_cli_override_updates_setup_config_without_real_dock
         prompt_path=None,
         repo_path=None,
         display=None,
+        require_codex_preflight=False,
     ):
         return SimpleNamespace(
             selected_issue=SimpleNamespace(
@@ -858,6 +860,7 @@ def test_main_default_ralph_path_still_runs_after_scaffold_command_added(
         prompt_path=None,
         repo_path=None,
         display=None,
+        require_codex_preflight=False,
     ):
         ralph_called["value"] = True
         return SimpleNamespace(
