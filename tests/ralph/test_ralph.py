@@ -82,7 +82,11 @@ class FakeRalphAgentSandboxHandle:
         self.command_result = command_result
         self.commands: list[list[str]] = []
 
-    def i_sandboxhandle_run(self, command: list[str], cwd=None) -> CommandResult:
+    def i_sandboxhandle_run(
+        self,
+        command: list[str],
+        cwd=None,
+    ) -> CommandResult:
         self.commands.append(command)
         return self.command_result
 
@@ -102,12 +106,14 @@ class FakeRalphCodexSandboxHandle:
         command: list[str],
         cwd=None,
         stdin_text: str = "",
+        environment: dict[str, str] | None = None,
     ) -> CommandResult:
         self.calls.append(
             {
                 "command": command,
                 "cwd": cwd,
                 "stdin_text": stdin_text,
+                "environment": environment,
             }
         )
         return self.command_result
@@ -1245,6 +1251,186 @@ def test_ralph_passes_repository_context_test_command_to_test_runner(
     ]
 
 
+def test_ralph_passes_provider_environment_only_to_codex_command(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _patch_clean_repository_context(monkeypatch, tmp_path)
+    _patch_successful_worktree_create(monkeypatch, tmp_path)
+    _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
+    _patch_successful_repository_context_discover(monkeypatch, tmp_path)
+    _patch_successful_sync_merge(monkeypatch)
+
+    worktree_path = tmp_path / "worktree"
+    normal_env_name = "RALPH_TEST_CODEX_HOME"
+    secret_env_name = "RALPH_TEST_CODEX_SECRET"
+    unallowed_env_name = "RALPH_TEST_UNALLOWED_PROVIDER_ENV"
+
+    monkeypatch.setenv(normal_env_name, "C:/Users/ME/.codex-test")
+    monkeypatch.setenv(secret_env_name, "test-provider-secret-value")
+    monkeypatch.setenv(unallowed_env_name, "this-value-must-not-leak")
+
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "default_agent",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "codex_command",
+        "codex",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "sandbox_mode",
+        "local",
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_env_allowlist",
+        (normal_env_name,),
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_secret_env_allowlist",
+        (secret_env_name,),
+    )
+
+    sandbox_handle = FakeRalphCodexSandboxHandle(
+        worktree_path,
+        CommandResult(
+            stdout=f"Codex completed with provider env.\n{COMPLETE_TOKEN}",
+            stderr="",
+            exit_code=0,
+        ),
+    )
+
+    def fake_sandbox_start(working_directory):
+        assert working_directory == worktree_path
+        return SandboxStartResult(
+            working_directory=working_directory,
+            provider_name="local",
+            started=True,
+            message="Started fake local sandbox for Codex provider env test.",
+            handle=sandbox_handle,
+        )
+
+    def fake_project_setup_run(
+        worktree_path,
+        sandbox_handle,
+    ) -> ProjectSetupResult:
+        install_result = sandbox_handle.i_sandboxhandle_run(
+            ["poetry", "install"],
+        )
+        baseline_test_result = sandbox_handle.i_sandboxhandle_run(
+            ["poetry", "run", "pytest"],
+        )
+
+        return ProjectSetupResult(
+            poetry_project=True,
+            install_ran=True,
+            install_passed=install_result.succeeded,
+            baseline_tests_ran=True,
+            baseline_tests_passed=baseline_test_result.succeeded,
+            blocked=False,
+            install_command=("poetry", "install"),
+            install_stdout=install_result.stdout,
+            install_stderr=install_result.stderr,
+            install_exit_code=install_result.exit_code,
+            baseline_test_command=("poetry", "run", "pytest"),
+            baseline_test_stdout=baseline_test_result.stdout,
+            baseline_test_stderr=baseline_test_result.stderr,
+            baseline_test_exit_code=baseline_test_result.exit_code,
+            message="Poetry setup passed.",
+        )
+
+    def fake_test_runner_run(
+        sandbox_handle=None,
+        command=None,
+    ) -> TestRunResult:
+        resolved_command = tuple(command or ("poetry", "run", "pytest"))
+        command_result = sandbox_handle.i_sandboxhandle_run(
+            list(resolved_command),
+        )
+
+        return TestRunResult(
+            passed=command_result.succeeded,
+            command=resolved_command,
+            message="Tests passed through the sandbox seam.",
+            stdout=command_result.stdout,
+            stderr=command_result.stderr,
+            exit_code=command_result.exit_code,
+        )
+
+    monkeypatch.setattr(
+        ralph_module,
+        "i_sandbox_start",
+        fake_sandbox_start,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_project_setup_run",
+        fake_project_setup_run,
+    )
+    monkeypatch.setattr(
+        ralph_module,
+        "i_test_runner_run",
+        fake_test_runner_run,
+    )
+
+    result = i_ralph_run(
+        issues=[
+            GitHubIssue(
+                number=79,
+                title="Prove provider env reaches only Codex",
+                body=(
+                    "RALPH should pass provider env allowlists only to the "
+                    "Codex command, not setup or pytest commands."
+                ),
+                labels=("tracer bullet",),
+            )
+        ],
+        repo_path=tmp_path,
+        display=SilentDisplay(),
+    )
+
+    assert result.status == RALPH_STATUS_COMPLETE
+    assert result.completed is True
+    assert result.project_setup_result is not None
+    assert result.project_setup_result.install_ran is True
+    assert result.project_setup_result.baseline_tests_ran is True
+    assert result.test_result is not None
+    assert result.test_result.passed is True
+
+    codex_calls = [
+        call
+        for call in sandbox_handle.calls
+        if call["command"][:2] == ["codex", "exec"]
+    ]
+    assert len(codex_calls) == 1
+
+    codex_environment = codex_calls[0]["environment"]
+    assert isinstance(codex_environment, dict)
+    assert codex_environment[normal_env_name] == "C:/Users/ME/.codex-test"
+    assert codex_environment[secret_env_name] == "test-provider-secret-value"
+    assert unallowed_env_name not in codex_environment
+
+    setup_and_test_calls = [
+        call
+        for call in sandbox_handle.calls
+        if call["command"][:2] != ["codex", "exec"]
+    ]
+
+    assert setup_and_test_calls
+    assert ["poetry", "install"] in [call["command"] for call in setup_and_test_calls]
+    assert [call["command"] for call in setup_and_test_calls].count(
+        ["poetry", "run", "pytest"]
+    ) == 2
+
+    for call in setup_and_test_calls:
+        assert call["environment"] is None
+
+
 def test_ralph_message_includes_test_diagnostics_when_pytest_fails(
     monkeypatch,
     tmp_path,
@@ -1419,9 +1605,7 @@ def test_ralph_default_agent_provider_runs_through_sandbox_seam(
     monkeypatch,
     tmp_path,
 ) -> None:
-    monkeypatch.setattr(
-        ralph_module.setup_config, "default_agent", "mock"
-    )  #  Added Code
+    monkeypatch.setattr(ralph_module.setup_config, "default_agent", "mock")
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
     _patch_successful_worktree_cleanup(monkeypatch, tmp_path)
@@ -1493,9 +1677,7 @@ def test_ralph_returns_failed_when_default_fake_test_agent_fails(
     monkeypatch,
     tmp_path,
 ) -> None:
-    monkeypatch.setattr(
-        ralph_module.setup_config, "default_agent", "mock"
-    )  #  Added Code
+    monkeypatch.setattr(ralph_module.setup_config, "default_agent", "mock")
     _patch_clean_repository_context(monkeypatch, tmp_path)
     _patch_successful_worktree_create(monkeypatch, tmp_path)
 
@@ -5489,6 +5671,16 @@ def test_ralph_uses_agent_provider_create_seam_when_no_provider_is_injected(
         "codex_command",
         "codex",
     )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_env_allowlist",
+        ("CODEX_HOME",),
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_secret_env_allowlist",
+        ("RALPH_PROVIDER_TEST_SECRET",),
+    )
 
     def fake_sandbox_start(working_directory):
         return SandboxStartResult(
@@ -5505,6 +5697,8 @@ def test_ralph_uses_agent_provider_create_seam_when_no_provider_is_injected(
         worktree_path,
         codex_command="",
         final_output_path=None,
+        provider_env_allowlist=(),
+        provider_secret_env_allowlist=(),
     ):
         seam_calls.append(
             {
@@ -5513,6 +5707,8 @@ def test_ralph_uses_agent_provider_create_seam_when_no_provider_is_injected(
                 "worktree_path": worktree_path,
                 "codex_command": codex_command,
                 "final_output_path": final_output_path,
+                "provider_env_allowlist": provider_env_allowlist,
+                "provider_secret_env_allowlist": provider_secret_env_allowlist,
             }
         )
         return fake_provider
@@ -5543,33 +5739,15 @@ def test_ralph_uses_agent_provider_create_seam_when_no_provider_is_injected(
     assert result.status == RALPH_STATUS_COMPLETE
     assert result.completed is True
     assert len(seam_calls) == 1
-    assert seam_calls[0]["provider_name"] == "codex"
-    assert seam_calls[0]["sandbox_handle"] is sandbox_handle
-    assert seam_calls[0]["worktree_path"] == worktree_path
-    assert seam_calls[0]["codex_command"] == "codex"
-    assert seam_calls[0]["final_output_path"] is None
-
-    seam_call_text = " ".join(str(value) for value in seam_calls[0].values())
-    forbidden_codex_fragments = (
-        "exec",
-        "--cd",
-        "--sandbox",
-        "workspace-write",
-        "--color",
-        "--json",
-        "--output-last-message",
-        "--full-auto",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--yolo",
-    )
-    for forbidden_fragment in forbidden_codex_fragments:
-        assert forbidden_fragment not in seam_call_text
-
-    assert fake_provider.prompts
-    assert (
-        "RALPH should create providers through the public seam."
-        in fake_provider.prompts[0]
-    )
+    assert seam_calls[0] == {
+        "provider_name": "codex",
+        "sandbox_handle": sandbox_handle,
+        "worktree_path": worktree_path,
+        "codex_command": "codex",
+        "final_output_path": None,
+        "provider_env_allowlist": ("CODEX_HOME",),
+        "provider_secret_env_allowlist": ("RALPH_PROVIDER_TEST_SECRET",),
+    }
 
 
 def _patch_successful_sandbox_start_for_github_automation_dry_run(

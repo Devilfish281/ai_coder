@@ -28,9 +28,20 @@ class FakeSandboxHandle:
     def __init__(self, command_result: CommandResult) -> None:
         self.command_result = command_result
         self.commands: list[list[str]] = []
+        self.calls: list[dict[str, object]] = []
 
-    def i_sandboxhandle_run(self, command: list[str]) -> CommandResult:
+    def i_sandboxhandle_run(
+        self,
+        command: list[str],
+        **kwargs: object,  #  Changed Code
+    ) -> CommandResult:
         self.commands.append(command)
+        self.calls.append(
+            {
+                "command": command,
+                "kwargs": dict(kwargs),
+            }
+        )
         return self.command_result
 
 
@@ -43,11 +54,13 @@ class FakeCodexSandboxHandle:
         self,
         command: list[str],
         stdin_text: str = "",
+        environment: dict[str, str] | None = None,
     ) -> CommandResult:
         self.calls.append(
             {
                 "command": command,
                 "stdin_text": stdin_text,
+                "environment": environment,
             }
         )
         return self.command_result
@@ -176,6 +189,26 @@ def test_fake_test_agent_does_not_put_prompt_text_in_command_arguments() -> None
     assert len(sandbox_handle.commands) == 1
 
 
+def test_fake_test_agent_provider_does_not_pass_custom_environment_to_sandbox() -> None:
+    sandbox_handle = FakeSandboxHandle(
+        CommandResult(
+            stdout="Fake test agent completed.\n<promise>COMPLETE</promise>\n",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = FakeTestAgentProvider(sandbox_handle)
+
+    result = provider.i_agent_provider_run("Fix issue #20")
+
+    assert result.error is None
+    assert COMPLETE_TOKEN in result.output
+    assert len(sandbox_handle.commands) == 1
+    assert len(sandbox_handle.calls) == 1
+    assert sandbox_handle.calls[0]["kwargs"] == {}
+    assert "environment" not in sandbox_handle.calls[0]["kwargs"]
+
+
 def test_codex_provider_builds_non_interactive_command(tmp_path) -> None:
     final_output_path = tmp_path / "codex-last-message.md"
     sandbox_handle = FakeCodexSandboxHandle(
@@ -255,6 +288,42 @@ def test_codex_provider_passes_prompt_through_stdin(tmp_path) -> None:
     assert prompt not in command
     assert prompt not in command_text
     assert command[-1] == "-"
+
+
+def test_codex_provider_passes_custom_environment_from_provider_allowlists(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    monkeypatch.setenv("RALPH_PROVIDER_TEST_SECRET", "test-secret-value")
+    monkeypatch.setenv("RALPH_PROVIDER_UNALLOWED_ENV", "should-not-leak")
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex done\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+        provider_env_allowlist=("CODEX_HOME",),
+        provider_secret_env_allowlist=("RALPH_PROVIDER_TEST_SECRET",),
+    )
+
+    result = provider.i_agent_provider_run("Fix issue with Codex.")
+
+    provider_environment = sandbox_handle.calls[0]["environment"]
+
+    assert result.error is None
+    assert provider_environment is not None
+    assert isinstance(provider_environment, dict)
+    assert provider_environment["CODEX_HOME"] == str(tmp_path / "codex-home")
+    assert provider_environment["RALPH_PROVIDER_TEST_SECRET"] == "test-secret-value"
+    assert "RALPH_PROVIDER_UNALLOWED_ENV" not in provider_environment
 
 
 def test_codex_provider_parses_jsonl_agent_message(tmp_path) -> None:
@@ -2000,6 +2069,68 @@ def test_codex_provider_nonzero_exit_completion_does_not_reach_orchestrator_succ
     assert stderr_text in result.error
     assert result.outputs == ()
     assert result.final_output == ""
+
+
+def test_codex_provider_raises_clear_error_when_provider_secret_env_is_missing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    secret_env_name = "RALPH_TEST_MISSING_PROVIDER_SECRET"
+    monkeypatch.delenv(secret_env_name, raising=False)
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=f"Codex completed.\n{COMPLETE_TOKEN}",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+        provider_secret_env_allowlist=(secret_env_name,),
+    )
+
+    with pytest.raises(ValueError, match=secret_env_name) as error_info:
+        provider.i_agent_provider_run("Fix issue #80")
+
+    assert "Missing required provider secret environment variable" in str(
+        error_info.value
+    )
+    assert sandbox_handle.calls == []
+
+
+def test_codex_provider_raises_clear_error_when_provider_secret_env_is_empty(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    secret_env_name = "RALPH_TEST_EMPTY_PROVIDER_SECRET"
+    monkeypatch.setenv(secret_env_name, "   ")
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout=f"Codex completed.\n{COMPLETE_TOKEN}",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+        provider_secret_env_allowlist=(secret_env_name,),
+    )
+
+    with pytest.raises(ValueError, match=secret_env_name) as error_info:
+        provider.i_agent_provider_run("Fix issue #81")
+
+    assert "Missing required provider secret environment variable" in str(
+        error_info.value
+    )
+    assert sandbox_handle.calls == []
 
 
 def test_agent_provider_create_codex_passes_large_prompt_through_stdin(

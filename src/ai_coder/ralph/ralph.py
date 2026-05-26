@@ -929,6 +929,8 @@ def _build_default_agent_provider(
         sandbox_handle=sandbox_handle,
         worktree_path=worktree_path,
         codex_command=setup_config.codex_command,
+        provider_env_allowlist=setup_config.provider_env_allowlist,
+        provider_secret_env_allowlist=setup_config.provider_secret_env_allowlist,
     )
 
 
