@@ -172,12 +172,12 @@ def i_codex_preflight_check(
             diagnostics=issue_close_safety_result.diagnostics,
         )
 
-    resolved_codex_command = _resolve_codex_executable_command(  #  Added Code
-        codex_command=codex_command,  #  Added Code
-        executable_finder=executable_finder,  #  Added Code
-    )  #  Added Code
+    resolved_codex_command = _resolve_codex_executable_command(
+        codex_command=codex_command,
+        executable_finder=executable_finder,
+    )
 
-    if not resolved_codex_command:  #  Changed Code
+    if not resolved_codex_command:
         return _with_safe_input_fields(
             _blocked_missing_codex_executable(
                 agent_provider=agent_provider,
@@ -191,9 +191,7 @@ def i_codex_preflight_check(
             dry_run=dry_run,
         )
 
-    version_command = _build_codex_version_command(
-        resolved_codex_command
-    )  #  Changed Code
+    version_command = _build_codex_version_command(resolved_codex_command)
 
     return _run_codex_readiness_command(
         agent_provider=agent_provider,
@@ -502,11 +500,12 @@ def _codex_executable_is_available(
     codex_command: str,
     executable_finder: Callable[[str], str | None] | None,
 ) -> bool:
-    if _codex_command_looks_like_path(codex_command):
-        return Path(codex_command).is_file()
-
-    finder = executable_finder or shutil.which
-    return finder(codex_command) is not None
+    return bool(
+        _resolve_codex_executable_command(
+            codex_command=codex_command,
+            executable_finder=executable_finder,
+        )
+    )
 
 
 def _resolve_codex_executable_command(
@@ -610,6 +609,7 @@ def _run_codex_readiness_command(
             exit_code=exit_code,
             stdout_text=stdout_text,
             stderr_text=stderr_text,
+            version_command=version_command_tuple,
         )
         message = _version_failure_message(
             exit_code=exit_code,
@@ -733,7 +733,9 @@ def _blocked_missing_codex_executable_after_run(
         f"'{codex_command}'."
     )
     diagnostics = _shorten_diagnostic_text(
-        f"{message} Details: {error}",
+        f"{message} "
+        f"Version command: {_format_version_command_for_diagnostics(version_command)}. "
+        f"Details: {error}",
     )
 
     return CodexPreflightResult(
@@ -758,7 +760,9 @@ def _blocked_codex_readiness_timeout(
 ) -> CodexPreflightResult:
     message = "Codex preflight blocked: Codex readiness command timed out."
     diagnostics = _shorten_diagnostic_text(
-        f"{message} Timeout seconds: {error.timeout}."
+        f"{message} "
+        f"Version command: {_format_version_command_for_diagnostics(version_command)}. "
+        f"Timeout seconds: {error.timeout}."
     )
 
     return CodexPreflightResult(
@@ -783,7 +787,9 @@ def _blocked_codex_readiness_os_error(
 ) -> CodexPreflightResult:
     message = "Codex preflight blocked: Codex readiness command could not run."
     diagnostics = _shorten_diagnostic_text(
-        f"{message} Details: {error}",
+        f"{message} "
+        f"Version command: {_format_version_command_for_diagnostics(version_command)}. "  #  Changed Code
+        f"Details: {error}",
     )
 
     return CodexPreflightResult(
@@ -841,13 +847,21 @@ def _format_command_diagnostics(
     exit_code: int,
     stdout_text: str,
     stderr_text: str,
+    version_command: tuple[str, ...],
 ) -> str:
     diagnostics = (
+        f"Version command: {_format_version_command_for_diagnostics(version_command)}. "
         f"Exit code: {exit_code}. "
         f"Stdout: {_format_empty_text(stdout_text)}. "
         f"Stderr: {_format_empty_text(stderr_text)}."
     )
     return _shorten_diagnostic_text(diagnostics)
+
+
+def _format_version_command_for_diagnostics(
+    version_command: tuple[str, ...],
+) -> str:
+    return repr(version_command)
 
 
 def _format_empty_text(text: str) -> str:
