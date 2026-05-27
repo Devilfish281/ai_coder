@@ -225,6 +225,30 @@ def test_local_sandbox_provider_rejects_empty_command(tmp_path) -> None:
         sandbox.i_sandboxhandle_run([])
 
 
+def test_local_sandbox_provider_passes_utf8_stdin_text_to_command(tmp_path) -> None:
+    sandbox = LocalSandboxProvider(tmp_path)
+    stdin_text = "Codex prompt with UTF-8 text: “cached” — café ✅"
+
+    result = sandbox.i_sandboxhandle_run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "raw_stdin = sys.stdin.buffer.read(); "
+                "sys.stdout.buffer.write(raw_stdin)"  #  Changed Code
+            ),
+        ],
+        stdin_text=stdin_text,
+    )
+
+    assert result.exit_code == 0
+    assert result.succeeded is True
+    assert result.failed is False
+    assert result.stderr == ""
+    assert result.stdout == stdin_text
+
+
 def test_sandbox_start_returns_local_handle(tmp_path) -> None:
     result = i_sandbox_start(tmp_path, provider_name="local")
 
