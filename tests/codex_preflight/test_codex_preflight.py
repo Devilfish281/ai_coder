@@ -684,3 +684,39 @@ def test_codex_preflight_default_runner_uses_subprocess_argument_list_without_sh
     assert subprocess_calls[0][1]["capture_output"] is True
     assert subprocess_calls[0][1]["text"] is True
     assert subprocess_calls[0][1]["check"] is False
+
+
+def test_codex_preflight_blocks_invalid_config_toml_feature_string(
+    tmp_path: Path,
+) -> None:
+    codex_config_path = tmp_path / "config.toml"
+    codex_config_path.write_text(
+        '[features]\nweb_search = "cached"\n',
+        encoding="utf-8",
+    )
+
+    config = _valid_codex_preflight_config(
+        tmp_path,
+        codex_config_paths=(codex_config_path,),
+    )
+    command_runner = FakeCommandRunner()
+    executable_finder = FakeExecutableFinder(found_path="codex")
+
+    result = i_codex_preflight_check(
+        config,
+        command_runner=command_runner,
+        executable_finder=executable_finder,
+    )
+
+    assert result.ready is False
+    assert result.blocked is True
+    assert result.codex_command == "codex"
+    assert result.version_command == ()
+    assert result.version_output == ""
+    assert result.exit_code is None
+    assert "config.toml [features] values must be booleans" in result.message
+    assert str(codex_config_path) in result.diagnostics
+    assert "web_search" in result.diagnostics
+    assert '"cached"' in result.diagnostics
+    assert command_runner.calls == []
+    assert executable_finder.calls == []

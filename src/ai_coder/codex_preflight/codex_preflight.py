@@ -1,6 +1,8 @@
 # src/ai_coder/codex_preflight/codex_preflight.py
 from __future__ import annotations
 
+import os
+import tomllib
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -56,10 +58,10 @@ def i_codex_preflight_check(
     """Verify the minimum config required for the Phase 3 Codex smoke proof.
 
     This preflight is intentionally read-only. It only reads configuration
-    values, checks executable availability, and runs a lightweight readiness
-    command. It does not construct providers, start sandboxes, create
-    worktrees, call models, commit changes, create pull requests, or close
-    GitHub issues.
+    values, checks executable availability, checks known Codex config shape
+    problems, and runs a lightweight readiness command. It does not construct
+    providers, start sandboxes, create worktrees, call models, commit changes,
+    create pull requests, or close GitHub issues.
     """
 
     agent_provider = _normalize_config_value(
@@ -170,6 +172,21 @@ def i_codex_preflight_check(
             dry_run=dry_run,
             message=issue_close_safety_result.message,
             diagnostics=issue_close_safety_result.diagnostics,
+        )
+
+    codex_config_result = _check_codex_config_toml_files(config)
+    if not codex_config_result.ready:
+        return _blocked_safe_input_result(
+            agent_provider=agent_provider,
+            sandbox_mode=sandbox_mode,
+            codex_command=codex_command,
+            prompt_input_result=prompt_input_result,
+            issue_input_result=issue_input_result,
+            pull_request_safety_result=pull_request_safety_result,
+            issue_close_safety_result=issue_close_safety_result,
+            dry_run=dry_run,
+            message=codex_config_result.message,
+            diagnostics=codex_config_result.diagnostics,
         )
 
     resolved_codex_command = _resolve_codex_executable_command(
@@ -352,6 +369,185 @@ def _check_issue_close_safety(
             f"{'enabled only in dry-run mode' if issue_close_enabled else 'disabled'}."
         ),
         dry_run=dry_run,
+    )
+
+
+def _check_codex_config_toml_files(config: Any) -> _CodexSafeInputCheckResult:
+    config_paths = _codex_config_path_candidates(config)
+    checked_paths: list[str] = []
+
+    for config_path in config_paths:
+        if not config_path.exists():
+            continue
+
+        checked_paths.append(str(config_path))
+        config_file_result = _check_codex_config_toml_file(config_path)
+
+        if not config_file_result.ready:
+            return config_file_result
+
+    if checked_paths:
+        return _CodexSafeInputCheckResult(
+            ready=True,
+            source=", ".join(checked_paths),
+            diagnostics=(
+                "Codex config.toml files were checked for invalid [features] "
+                "value types."
+            ),
+        )
+
+    return _CodexSafeInputCheckResult(
+        ready=True,
+        source="not_found",
+        diagnostics="No Codex config.toml file was found to statically check.",
+    )
+
+
+def _codex_config_path_candidates(config: Any) -> tuple[Path, ...]:
+    configured_paths = getattr(config, "codex_config_paths", ())
+
+    if isinstance(configured_paths, str | Path):
+        raw_config_paths = (configured_paths,)
+    else:
+        raw_config_paths = configured_paths or ()
+
+    explicit_paths = tuple(
+        Path(str(raw_path).strip())
+        for raw_path in raw_config_paths
+        if str(raw_path).strip()
+    )
+
+    if explicit_paths:
+        return _unique_codex_config_paths(explicit_paths)
+
+    candidate_paths: list[Path] = []
+
+    codex_home = os.getenv("CODEX_HOME", "").strip()
+    if codex_home:
+        candidate_paths.append(Path(codex_home) / "config.toml")
+
+    candidate_paths.append(Path.home() / ".codex" / "config.toml")
+
+    repo_path_text = _config_text(config, "repo_path")
+    if repo_path_text:
+        candidate_paths.append(Path(repo_path_text) / ".codex" / "config.toml")
+
+    return _unique_codex_config_paths(candidate_paths)
+
+
+def _unique_codex_config_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
+    unique_paths: list[Path] = []
+    seen_paths: set[str] = set()
+
+    for path in paths:
+        cleaned_path = Path(path)
+        path_key = str(cleaned_path)
+
+        if not path_key or path_key in seen_paths:
+            continue
+
+        seen_paths.add(path_key)
+        unique_paths.append(cleaned_path)
+
+    return tuple(unique_paths)
+
+
+def _check_codex_config_toml_file(config_path: Path) -> _CodexSafeInputCheckResult:
+    if not config_path.is_file():
+        message = "Codex preflight blocked: config.toml path is not a file."
+        diagnostics = _shorten_diagnostic_text(f"{message} Path: {config_path}.")
+        return _CodexSafeInputCheckResult(
+            ready=False,
+            source=str(config_path),
+            message=message,
+            diagnostics=diagnostics,
+        )
+
+    try:
+        parsed_config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as error:
+        message = "Codex preflight blocked: config.toml is not valid TOML."
+        diagnostics = _shorten_diagnostic_text(
+            f"{message} Path: {config_path}. Details: {error}."
+        )
+        return _CodexSafeInputCheckResult(
+            ready=False,
+            source=str(config_path),
+            message=message,
+            diagnostics=diagnostics,
+        )
+    except OSError as error:
+        message = "Codex preflight blocked: config.toml could not be read."
+        diagnostics = _shorten_diagnostic_text(
+            f"{message} Path: {config_path}. Details: {error}."
+        )
+        return _CodexSafeInputCheckResult(
+            ready=False,
+            source=str(config_path),
+            message=message,
+            diagnostics=diagnostics,
+        )
+
+    features_value = parsed_config.get("features", {})
+
+    if not features_value:
+        return _CodexSafeInputCheckResult(
+            ready=True,
+            source=str(config_path),
+            diagnostics=f"Codex config.toml has no [features] table: {config_path}.",
+        )
+
+    if not isinstance(features_value, dict):
+        message = "Codex preflight blocked: config.toml [features] must be a table."
+        diagnostics = _shorten_diagnostic_text(
+            f"{message} Path: {config_path}. Actual value: {features_value!r}."
+        )
+        return _CodexSafeInputCheckResult(
+            ready=False,
+            source=str(config_path),
+            message=message,
+            diagnostics=diagnostics,
+        )
+
+    for feature_name, feature_value in features_value.items():
+        if not isinstance(feature_value, bool):
+            return _codex_feature_type_error_result(
+                config_path=config_path,
+                feature_name=str(feature_name),
+                feature_value=feature_value,
+            )
+
+    return _CodexSafeInputCheckResult(
+        ready=True,
+        source=str(config_path),
+        diagnostics=(
+            "Codex config.toml [features] table contains only boolean values: "
+            f"{config_path}."
+        ),
+    )
+
+
+def _codex_feature_type_error_result(
+    *,
+    config_path: Path,
+    feature_name: str,
+    feature_value: object,
+) -> _CodexSafeInputCheckResult:
+    message = "Codex preflight blocked: config.toml [features] values must be booleans."
+    diagnostics = (
+        f"{message} Path: {config_path}. "
+        f"Feature: {feature_name}. "
+        f"Value: {feature_value!r}. "
+        f"Type: {type(feature_value).__name__}. "
+        'Move string settings such as web_search = "cached" out of [features] '
+        "and place them at the top level of config.toml."
+    )
+
+    return _CodexSafeInputCheckResult(
+        ready=False,
+        source=str(config_path),
+        message=message,
+        diagnostics=_shorten_diagnostic_text(diagnostics),
     )
 
 
