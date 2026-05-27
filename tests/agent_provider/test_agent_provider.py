@@ -2163,3 +2163,33 @@ def test_agent_provider_create_codex_passes_large_prompt_through_stdin(
     assert prompt not in command
     assert prompt not in command_text
     assert command[-1] == "-"
+
+
+def test_codex_provider_explains_invalid_config_toml_feature_type(tmp_path):
+    class FailedCodexCommandResult:
+        stdout = ""
+        stderr = (
+            'Error loading config.toml: invalid type: string "cached", '
+            "expected a boolean\nin `features`\n\n"
+        )
+        exit_code = 1
+        succeeded = False
+
+    class FakeSandboxHandle:
+        def i_sandboxhandle_run(self, command, **kwargs):
+            return FailedCodexCommandResult()
+
+    provider = CodexProvider(
+        sandbox_handle=FakeSandboxHandle(),
+        codex_command="codex",
+        worktree_path=tmp_path,
+    )
+
+    response = provider.i_agent_provider_run("Fix the issue.")
+
+    assert response.exit_code == 1
+    assert response.stderr == FailedCodexCommandResult.stderr
+    assert response.error is not None
+    assert "value under [features] is not a boolean" in response.error
+    assert 'Move web_search = "cached" out of [features]' in response.error
+    assert "Original Codex error:" in response.error

@@ -799,6 +799,10 @@ def _codex_error_message(
     stdout_text = str(getattr(command_result, "stdout", ""))
     exit_code = getattr(command_result, "exit_code", "unknown")
 
+    config_toml_error_hint = _codex_config_toml_error_hint(stderr_text)
+    if config_toml_error_hint:
+        return config_toml_error_hint
+
     if stderr_text:
         return stderr_text
 
@@ -823,6 +827,59 @@ def _codex_error_message(
         return plain_stdout_text
 
     return f"Codex exited with code {exit_code}."
+
+
+def _codex_config_toml_error_hint(stderr_text: str) -> str:
+    cleaned_stderr_text = stderr_text.strip()
+
+    if "Error loading config.toml" not in cleaned_stderr_text:
+        return ""
+
+    if "expected a boolean" not in cleaned_stderr_text:
+        return _append_original_codex_error(
+            friendly_message=(
+                "Codex could not load config.toml. Fix the Codex config file "
+                "before running RALPH again."
+            ),
+            original_error=cleaned_stderr_text,
+        )
+
+    if "in `features`" not in cleaned_stderr_text:
+        return _append_original_codex_error(
+            friendly_message=(
+                "Codex could not load config.toml because one config value has "
+                "the wrong type. Fix the Codex config file before running RALPH again."
+            ),
+            original_error=cleaned_stderr_text,
+        )
+
+    return _append_original_codex_error(
+        friendly_message=(
+            "Codex could not load config.toml because a value under [features] "
+            "is not a boolean. Values inside [features] must be true or false. "
+            'Move web_search = "cached" out of [features] and place it at the '
+            "top level of config.toml, or remove the bad feature entry."
+        ),
+        original_error=cleaned_stderr_text,
+    )
+
+
+def _append_original_codex_error(
+    *,
+    friendly_message: str,
+    original_error: str,
+) -> str:
+    cleaned_friendly_message = friendly_message.strip()
+    cleaned_original_error = original_error.strip()
+
+    if not cleaned_original_error:
+        return cleaned_friendly_message
+
+    return (
+        f"{cleaned_friendly_message}\n\n"
+        "Original Codex error:\n"
+        f"{cleaned_original_error}"
+    )
 
 
 def _codex_diagnostics_from_command_result(
