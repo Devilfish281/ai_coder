@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ai_coder.codex_preflight import i_codex_preflight_check
+import ai_coder.codex_preflight.codex_preflight as codex_preflight_module
 
 
 class FakeCommandRunner:
@@ -103,6 +104,8 @@ def test_codex_preflight_passes_when_provider_is_codex_and_sandbox_is_local(
     assert result.pull_request_safe is True
     assert result.issue_close_safe is True
     assert result.dry_run is True
+    assert executable_finder.calls == ["codex"]
+    assert command_runner.calls[0][0] == ["codex", "--version"]
     assert result.version_command == ("codex", "--version")
     assert result.version_output == "codex 1.0.0"
     assert result.diagnostics == ""
@@ -180,6 +183,8 @@ def test_codex_preflight_normalizes_case_and_whitespace(tmp_path: Path) -> None:
     assert result.agent_provider == "codex"
     assert result.sandbox_mode == "local"
     assert result.codex_command == "codex"
+    assert executable_finder.calls == ["codex"]
+    assert command_runner.calls[0][0] == ["codex", "--version"]
     assert result.version_command == ("codex", "--version")
     assert "preflight passed" in result.message
 
@@ -198,9 +203,38 @@ def test_codex_preflight_checks_configured_codex_command(tmp_path: Path) -> None
         executable_finder=executable_finder,
     )
 
+    assert result.ready is True
+    assert result.blocked is False
     assert result.codex_command == "codex"
     assert executable_finder.calls == ["codex"]
+    assert result.version_command == ("codex", "--version")
     assert command_runner.calls[0][0] == ["codex", "--version"]
+
+
+def test_codex_preflight_reuses_resolved_windows_cmd_path_for_version_command(
+    tmp_path: Path,
+) -> None:
+    resolved_cmd_path = r"C:\Users\ME\AppData\Roaming\npm\codex.CMD"
+    config = _valid_codex_preflight_config(
+        tmp_path,
+        codex_command="codex",
+    )
+    command_runner = FakeCommandRunner(stdout="codex-cli 0.133.0")
+    executable_finder = FakeExecutableFinder(found_path=resolved_cmd_path)
+
+    result = i_codex_preflight_check(
+        config,
+        command_runner=command_runner,
+        executable_finder=executable_finder,
+    )
+
+    assert result.ready is True
+    assert result.blocked is False
+    assert result.codex_command == "codex"
+    assert executable_finder.calls == ["codex"]
+    assert result.version_command == (resolved_cmd_path, "--version")
+    assert command_runner.calls[0][0] == [resolved_cmd_path, "--version"]
+    assert result.version_output == "codex-cli 0.133.0"
 
 
 def test_codex_preflight_runs_read_only_version_command(tmp_path: Path) -> None:
@@ -215,9 +249,11 @@ def test_codex_preflight_runs_read_only_version_command(tmp_path: Path) -> None:
     )
 
     assert len(command_runner.calls) == 1
+    assert executable_finder.calls == ["codex"]
     assert command_runner.calls[0][0] == ["codex", "--version"]
     assert result.ready is True
     assert result.blocked is False
+    assert result.codex_command == "codex"
     assert result.version_command == ("codex", "--version")
     assert result.version_output == "codex 2.1.0"
 
@@ -267,6 +303,7 @@ def test_codex_preflight_blocks_missing_codex_executable(tmp_path: Path) -> None
     assert "executable was not found" in result.message
     assert "codex" in result.message
     assert "executable was not found" in result.diagnostics
+    assert executable_finder.calls == ["codex"]
     assert command_runner.calls == []
 
 
@@ -295,6 +332,9 @@ def test_codex_preflight_blocks_version_command_failure_with_diagnostics(
     assert result.exit_code == 1
     assert "exit code 1" in result.message
     assert "Codex is not ready." in result.diagnostics
+    assert "Version command:" in result.diagnostics
+    assert "codex" in result.diagnostics
+    assert "--version" in result.diagnostics
 
 
 def test_codex_preflight_blocks_missing_executable_from_file_not_found_error(
@@ -538,3 +578,109 @@ def test_codex_preflight_blocks_unsafe_issue_close_configuration(
     assert result.version_command == ()
     assert command_runner.calls == []
     assert executable_finder.calls == []
+
+
+def test_codex_preflight_uses_configured_full_codex_path_directly(
+    tmp_path: Path,
+) -> None:
+    codex_cmd_path = tmp_path / "codex.cmd"
+    codex_cmd_path.write_text("@echo off\n", encoding="utf-8")
+    config = _valid_codex_preflight_config(
+        tmp_path,
+        codex_command=str(codex_cmd_path),
+    )
+    command_runner = FakeCommandRunner(stdout="codex-cli 0.133.0")
+    executable_finder = FakeExecutableFinder(found_path="codex")
+
+    result = i_codex_preflight_check(
+        config,
+        command_runner=command_runner,
+        executable_finder=executable_finder,
+    )
+
+    assert result.ready is True
+    assert result.blocked is False
+    assert result.codex_command == str(codex_cmd_path)
+    assert result.version_command == (str(codex_cmd_path), "--version")
+    assert command_runner.calls[0][0] == [str(codex_cmd_path), "--version"]
+    assert result.version_output == "codex-cli 0.133.0"
+    assert executable_finder.calls == []
+
+
+def test_codex_preflight_manual_check_contract_uses_resolved_cmd_path_and_stays_read_only(
+    tmp_path: Path,
+) -> None:
+    resolved_cmd_path = r"C:\Users\ME\AppData\Roaming\npm\codex.CMD"
+    config = _valid_codex_preflight_config(
+        tmp_path,
+        codex_command="codex",
+    )
+    prompt_path = Path(config.prompt_path)
+    prompt_text_before = prompt_path.read_text(encoding="utf-8")
+    command_runner = FakeCommandRunner(stdout="codex-cli 0.133.0")
+    executable_finder = FakeExecutableFinder(found_path=resolved_cmd_path)
+
+    result = i_codex_preflight_check(
+        config,
+        command_runner=command_runner,
+        executable_finder=executable_finder,
+    )
+
+    assert result.ready is True
+    assert result.blocked is False
+    assert result.codex_command == "codex"
+    assert result.version_command == (resolved_cmd_path, "--version")
+    assert result.version_output == "codex-cli 0.133.0"
+    assert result.diagnostics == ""
+    assert result.exit_code == 0
+    assert executable_finder.calls == ["codex"]
+    assert command_runner.calls == [([resolved_cmd_path, "--version"], {})]
+    assert prompt_path.read_text(encoding="utf-8") == prompt_text_before
+
+
+def test_codex_preflight_default_runner_uses_subprocess_argument_list_without_shell(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    resolved_cmd_path = r"C:\Users\ME\AppData\Roaming\npm\codex.CMD"
+    config = _valid_codex_preflight_config(
+        tmp_path,
+        codex_command="codex",
+    )
+    executable_finder = FakeExecutableFinder(found_path=resolved_cmd_path)
+    subprocess_calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_subprocess_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> SimpleNamespace:
+        subprocess_calls.append((command, kwargs))
+        return SimpleNamespace(
+            returncode=0,
+            stdout="codex-cli 0.133.0",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        codex_preflight_module.subprocess,
+        "run",
+        fake_subprocess_run,
+    )
+
+    result = i_codex_preflight_check(
+        config,
+        executable_finder=executable_finder,
+    )
+
+    assert result.ready is True
+    assert result.blocked is False
+    assert result.codex_command == "codex"
+    assert result.version_command == (resolved_cmd_path, "--version")
+    assert result.version_output == "codex-cli 0.133.0"
+    assert executable_finder.calls == ["codex"]
+    assert len(subprocess_calls) == 1
+    assert subprocess_calls[0][0] == [resolved_cmd_path, "--version"]
+    assert "shell" not in subprocess_calls[0][1]
+    assert subprocess_calls[0][1]["capture_output"] is True
+    assert subprocess_calls[0][1]["text"] is True
+    assert subprocess_calls[0][1]["check"] is False
