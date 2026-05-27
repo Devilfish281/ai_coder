@@ -172,10 +172,12 @@ def i_codex_preflight_check(
             diagnostics=issue_close_safety_result.diagnostics,
         )
 
-    if not _codex_executable_is_available(
-        codex_command=codex_command,
-        executable_finder=executable_finder,
-    ):
+    resolved_codex_command = _resolve_codex_executable_command(  #  Added Code
+        codex_command=codex_command,  #  Added Code
+        executable_finder=executable_finder,  #  Added Code
+    )  #  Added Code
+
+    if not resolved_codex_command:  #  Changed Code
         return _with_safe_input_fields(
             _blocked_missing_codex_executable(
                 agent_provider=agent_provider,
@@ -189,7 +191,10 @@ def i_codex_preflight_check(
             dry_run=dry_run,
         )
 
-    version_command = _build_codex_version_command(codex_command)
+    version_command = _build_codex_version_command(
+        resolved_codex_command
+    )  #  Changed Code
+
     return _run_codex_readiness_command(
         agent_provider=agent_provider,
         sandbox_mode=sandbox_mode,
@@ -502,6 +507,26 @@ def _codex_executable_is_available(
 
     finder = executable_finder or shutil.which
     return finder(codex_command) is not None
+
+
+def _resolve_codex_executable_command(
+    *,
+    codex_command: str,
+    executable_finder: Callable[[str], str | None] | None,
+) -> str:
+    if _codex_command_looks_like_path(codex_command):
+        if Path(codex_command).is_file():
+            return codex_command
+
+        return ""
+
+    finder = executable_finder or shutil.which
+    resolved_command = finder(codex_command)
+
+    if not resolved_command:
+        return ""
+
+    return resolved_command
 
 
 def _codex_command_looks_like_path(codex_command: str) -> bool:
