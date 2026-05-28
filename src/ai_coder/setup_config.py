@@ -128,6 +128,14 @@ class c_setup_config(BaseModel):
         description="Flag to indicate if the application is running in testing mode.",
     )
 
+    # DEBUG_SHOW_PROMPT_FLAG:
+    debug_show_prompt_flag: bool = Field(
+        default_factory=lambda: c_setup_config.env_bool(
+            "DEBUG_SHOW_PROMPT_FLAG", False
+        ),
+        description="Flag to indicate if the application is running in debug show prompt mode.",
+    )
+
     logger: Optional[logging.Logger] = Field(
         default=None, description="Logger Configuration."
     )
@@ -612,6 +620,7 @@ class c_setup_config(BaseModel):
         """Return a safe dictionary representation of the configuration."""
         return {
             "testing_flag": self.testing_flag,
+            "debug_show_prompt_flag": self.debug_show_prompt_flag,
             "openai_model": self.openai_model,
             "issue_number": self.issue_number,
             "issue_title": self.issue_title,
@@ -664,6 +673,7 @@ class c_setup_config(BaseModel):
         return (
             "c_setup_config("
             f"testing_flag={self.testing_flag!r}, "
+            f"debug_show_prompt_flag={self.debug_show_prompt_flag!r}, "
             f"openai_model={self.openai_model!r}, "
             f"issue_number={self.issue_number!r}, "
             f"issue_title={self.issue_title!r}, "

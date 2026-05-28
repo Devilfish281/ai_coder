@@ -561,10 +561,25 @@ def i_ralph_run(
         "Step 6b: Preprocess prompt after sandbox is ready."
     )
 
-    # logger.info(f"Raw prompt template before preprocessing:\n{raw_prompt_template}")
+    if setup_config.debug_show_prompt_flag:
+        logger.info(f"Raw prompt template before preprocessing:\n{raw_prompt_template}")
+
     logger.info(
         "Raw prompt template length before preprocessing: %d", len(raw_prompt_template)
     )
+    # len repository_context_result.prompt_summary
+    logger.info(
+        "Repository context summary length: %d",
+        len(repository_context_result.prompt_summary),
+    )
+
+    if setup_config.debug_show_prompt_flag:
+        # raw_prompt_template
+        logger.info(f"Raw prompt template before preprocessing:\n{raw_prompt_template}")
+        # repository_context_result.prompt_summar
+        logger.info(
+            f"Repository context summary:\n{repository_context_result.prompt_summary}"
+        )
 
     logger.info(
         "Selected issue for prompt preprocessing: %s",
@@ -578,8 +593,9 @@ def i_ralph_run(
         branch_name=worktree_result.branch_name,
         worktree_path=worktree_result.worktree_path,
     )
+    if setup_config.debug_show_prompt_flag:
+        logger.info(f"Final prompt after preprocessing:\n{prompt}")
 
-    # logger.info(f"Final prompt after preprocessing:\n{prompt}")
     logger.info("Final prompt length after preprocessing: %d", len(prompt))
     active_display.i_display_message(f"Final prompt length: {len(prompt)}")
 
