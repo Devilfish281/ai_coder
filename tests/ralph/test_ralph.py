@@ -2742,6 +2742,11 @@ def test_ralph_does_not_log_raw_issue_body_by_default(
     raw_body_marker = "RAW_BODY_SHOULD_NOT_BE_LOGGED_047"
 
     monkeypatch.setattr(ralph_module, "logger", fake_logger)
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "debug_show_prompt_flag",
+        False,
+    )
 
     provider = MockAgentProvider(
         responses=["Done\n<promise>COMPLETE</promise>"],

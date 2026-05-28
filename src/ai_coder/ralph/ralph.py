@@ -574,8 +574,6 @@ def i_ralph_run(
     )
 
     if setup_config.debug_show_prompt_flag:
-        # raw_prompt_template
-        logger.info(f"Raw prompt template before preprocessing:\n{raw_prompt_template}")
         # repository_context_result.prompt_summar
         logger.info(
             f"Repository context summary:\n{repository_context_result.prompt_summary}"

@@ -53,6 +53,7 @@ _RUNTIME_ENV_NAMES = (
     "RALPH_GITHUB_SKIP_ASSIGNED_ISSUES",
     "RALPH_GITHUB_ALLOWED_ASSIGNEE_LOGINS",
     "RALPH_GITHUB_ISSUE_CLOSE_ENABLED",
+    "DEBUG_SHOW_PROMPT_FLAG",
 )
 
 
@@ -833,3 +834,30 @@ def test_setup_config_secret_values_does_not_use_normal_env_allowlist(
 
     assert result == ()
     assert "1" not in result
+
+
+def test_setup_config_debug_show_prompt_flag_defaults_to_false(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+
+    config = _fresh_config()
+
+    assert config.debug_show_prompt_flag is False
+    assert config.to_dict()["debug_show_prompt_flag"] is False
+
+
+def test_setup_config_loads_debug_show_prompt_flag_from_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _prepare_valid_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv("DEBUG_SHOW_PROMPT_FLAG", "true")
+
+    config = _fresh_config()
+
+    assert config.debug_show_prompt_flag is True
+    assert config.to_dict()["debug_show_prompt_flag"] is True
