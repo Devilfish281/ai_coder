@@ -123,6 +123,12 @@ def test_codex_smoke_checklist_grades_real_worktree_flow(
         "local",
         "Issue #49",
         "tracer bullet",
+        "Safe Codex command check",
+        'codex exec --sandbox workspace-write --color never "Run git status --short and poetry --version. Do not edit files."',
+        "spawn setup refresh",
+        "git status --short",
+        "poetry --version",
+        "No files are edited",
         ".ai_coder/ai_coder_worktrees/",
         "stdin",
         "baseline pytest",
@@ -317,7 +323,7 @@ def test_scaffold_create_generates_prompt_templates_with_safe_placeholders(
         tmp_path / ".ai-code" / "prompts" / "implementation.md",
         tmp_path / ".ai-code" / "prompts" / "review.md",
         tmp_path / ".ai-code" / "prompts" / "merge.md",
-        tmp_path / CODEX_SMOKE_PROMPT_RELATIVE_PATH,  #  Added Code
+        tmp_path / CODEX_SMOKE_PROMPT_RELATIVE_PATH,
     )
     prompt_texts = tuple(
         prompt_path.read_text(encoding="utf-8") for prompt_path in prompt_paths
@@ -375,7 +381,7 @@ def test_scaffold_prompt_templates_do_not_include_real_secrets_or_command_expans
         tmp_path / ".ai-code" / "prompts" / "implementation.md",
         tmp_path / ".ai-code" / "prompts" / "review.md",
         tmp_path / ".ai-code" / "prompts" / "merge.md",
-        tmp_path / CODEX_SMOKE_PROMPT_RELATIVE_PATH,  #  Added Code
+        tmp_path / CODEX_SMOKE_PROMPT_RELATIVE_PATH,
     )
     combined_prompt_text = "\n".join(
         prompt_path.read_text(encoding="utf-8") for prompt_path in prompt_paths

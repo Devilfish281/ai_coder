@@ -558,6 +558,20 @@ The prompt tells Codex what tiny code change to make. This checklist tells the d
 - [ ] `PROMPT_PATH` or `--prompt-path` uses `.ai-code/prompts/codex_smoke_test.md`.
 - [ ] `DRY_RUN` is enabled or the CLI passes `--dry-run`.
 
+## Safe Codex command check
+
+Before running RALPH, verify Codex can execute a harmless project inspection command from the project root.
+
+```powershell
+codex exec --sandbox workspace-write --color never "Run git status --short and poetry --version. Do not edit files."
+```
+
+- [ ] The command runs from the real project root.
+- [ ] The command completes without `spawn setup refresh`.
+- [ ] `git status --short` output is visible.
+- [ ] `poetry --version` output is visible.
+- [ ] No files are edited.
+
 ## Manual invocation command shape
 
 The official Issue 078 smoke-proof invocation style is a documented manual command using the existing CLI and setup configuration values.

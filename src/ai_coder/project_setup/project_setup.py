@@ -8,6 +8,13 @@ from typing import Any
 from ai_coder.sandbox_provider import CommandResult
 
 
+from ai_coder.my_utils.env_loader import load_dotenv_once
+from ai_coder.setup_config import c_setup_config
+
+load_dotenv_once()
+setup_config = c_setup_config.get_instance()
+
+
 @dataclass(frozen=True)
 class ProjectSetupResult:
     """
@@ -71,7 +78,8 @@ def i_project_setup_run(
 
     This function detects Poetry projects by looking for ``pyproject.toml``.
     If the worktree is a Poetry project, it runs ``poetry install`` first.
-    If installation succeeds, it runs baseline ``poetry run pytest``.
+    If installation succeeds, it runs baseline ``poetry run pytest`` unless
+    debug test skipping is enabled in setup_config.
 
     Commands are run through the sandbox handle so RALPH does not hard-code
     local, Docker, or future sandbox behavior.
@@ -122,6 +130,24 @@ def i_project_setup_run(
                 step_name="poetry install",
                 command=install_command,
                 result=install_result,
+            ),
+        )
+
+    if setup_config.debug_skip_tests_flag:
+        return ProjectSetupResult(
+            poetry_project=True,
+            install_ran=True,
+            install_passed=True,
+            baseline_tests_ran=False,
+            baseline_tests_passed=False,
+            blocked=False,
+            install_command=install_command,
+            install_stdout=install_result.stdout,
+            install_stderr=install_result.stderr,
+            install_exit_code=install_result.exit_code,
+            message=(
+                "Poetry setup passed. poetry install succeeded. "
+                "Skipped baseline poetry run pytest because DEBUG_SKIP_TESTS_FLAG is enabled."
             ),
         )
 

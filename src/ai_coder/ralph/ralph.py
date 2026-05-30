@@ -478,6 +478,8 @@ def i_ralph_run(
         "Step 5a: Detect Poetry, run poetry install, run poetry run pytest."
     )
 
+    logger.info(f"Debug skip tests flag: {setup_config.debug_skip_tests_flag}")
+
     project_setup_result = i_project_setup_run(
         worktree_path=worktree_result.worktree_path,
         sandbox_handle=sandbox_result.handle,

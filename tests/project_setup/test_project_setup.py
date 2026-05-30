@@ -1,8 +1,20 @@
 # tests/project_setup/test_project_setup.py
 from pathlib import Path
 
+import pytest
+import ai_coder.project_setup.project_setup as project_setup_module
+
 from ai_coder.project_setup import i_project_setup_run
 from ai_coder.sandbox_provider import CommandResult
+
+
+@pytest.fixture(autouse=True)
+def force_project_setup_tests_to_run_baseline_pytest_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        project_setup_module.setup_config,
+        "debug_skip_tests_flag",
+        False,
+    )
 
 
 class FakeProjectSetupSandboxHandle:
@@ -137,4 +149,77 @@ def test_project_setup_failed_baseline_pytest_blocks(tmp_path) -> None:
     assert sandbox.commands == [
         (["poetry", "install"], tmp_path),
         (["poetry", "run", "pytest"], tmp_path),
+    ]
+
+
+def test_project_setup_debug_skip_tests_flag_skips_baseline_pytest(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "ai_coder.project_setup.project_setup.setup_config.debug_skip_tests_flag",
+        True,
+    )
+
+    (tmp_path / "pyproject.toml").write_text("[tool.poetry]\n", encoding="utf-8")
+    sandbox = FakeProjectSetupSandboxHandle(
+        [
+            CommandResult(stdout="install passed", stderr="", exit_code=0),
+            CommandResult(
+                stdout="tests should not run", stderr="pytest failed", exit_code=1
+            ),
+        ]
+    )
+
+    result = i_project_setup_run(
+        worktree_path=tmp_path,
+        sandbox_handle=sandbox,
+    )
+
+    assert result.blocked is False
+    assert result.install_ran is True
+    assert result.install_passed is True
+    assert result.baseline_tests_ran is False
+    assert result.baseline_tests_passed is False
+    assert result.baseline_test_command == ()
+    assert "Skipped baseline poetry run pytest" in result.message
+    assert sandbox.commands == [
+        (["poetry", "install"], tmp_path),
+    ]
+
+
+def test_project_setup_debug_skip_tests_flag_skips_baseline_pytest(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        project_setup_module.setup_config,
+        "debug_skip_tests_flag",
+        True,
+    )
+
+    (tmp_path / "pyproject.toml").write_text("[tool.poetry]\n", encoding="utf-8")
+    sandbox = FakeProjectSetupSandboxHandle(
+        [
+            CommandResult(stdout="install passed", stderr="", exit_code=0),
+            CommandResult(
+                stdout="tests should not run", stderr="pytest failed", exit_code=1
+            ),
+        ]
+    )
+
+    result = i_project_setup_run(
+        worktree_path=tmp_path,
+        sandbox_handle=sandbox,
+    )
+
+    assert result.blocked is False
+    assert result.install_ran is True
+    assert result.install_passed is True
+    assert result.baseline_tests_ran is False
+    assert result.baseline_tests_passed is False
+    assert result.baseline_test_command == ()
+    assert "Skipped baseline poetry run pytest" in result.message
+    assert sandbox.commands == [
+        (["poetry", "install"], tmp_path),
     ]

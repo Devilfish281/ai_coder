@@ -136,6 +136,12 @@ class c_setup_config(BaseModel):
         description="Flag to indicate if the application is running in debug show prompt mode.",
     )
 
+    # DEBUG_SKIP_TESTS_FLAG:
+    debug_skip_tests_flag: bool = Field(
+        default_factory=lambda: c_setup_config.env_bool("DEBUG_SKIP_TESTS_FLAG", False),
+        description="Flag to indicate if the application is running in debug skip tests mode.",
+    )
+
     logger: Optional[logging.Logger] = Field(
         default=None, description="Logger Configuration."
     )
