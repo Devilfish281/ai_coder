@@ -213,38 +213,36 @@ tests/
 
 Expected behavior is defined by tests.
 
-Before changing behavior:
+Before changing behavior, Codex must:
 
 1. Read the related tests.
-2. Add or update a failing pytest test when behavior is missing.
-3. Write the smallest implementation needed to pass.
-4. Refactor only after tests pass.
+2. Add or update a focused test when behavior is missing.
+3. Write the smallest implementation needed to satisfy the selected issue.
+4. Refactor only when the change remains small and directly related.
 
-Use this test command first:
+Codex must not execute project test commands.
+
+Codex must not run:
 
 ```powershell
 poetry run pytest
 ```
 
-If Poetry is not available inside the environment, use:
+Codex must not run:
 
 ```powershell
 pytest
 ```
 
-Do not use this command for this project:
+Codex must not run final project verification.
 
-```powershell
-python -m pytest --capture=tee-sys
-```
+RALPH owns all test execution after Codex returns from the orchestrator. Codex should only report the exact verification command that RALPH or the human operator should run.
 
-When testing printed output, use pytest output capture such as `capsys`.
+When testing printed output is required by the selected issue, use pytest output capture such as `capsys` in the test code.
 
 Avoid testing private implementation details directly.
 
 Prefer tests that cross the public interface seam.
-
----
 
 # Codex Plan 3: A Plan to Fix the Selected GitHub Issue
 
@@ -265,8 +263,8 @@ The job is to:
 3. Read the related tests and source code.
 4. Add or update a focused test only when behavior is missing.
 5. Make the smallest source change needed.
-6. Optionally attempt focused tests if command execution is available.
-7. Report any testing blocker honestly.
+6. Do not run focused tests, full tests, or final project verification.
+7. Report that host-side verification is required.
 8. Do not commit changes. RALPH owns final testing, commit creation, sync, pull request draft behavior, and issue closing after the orchestrator returns.
 9. Output `<promise>COMPLETE</promise>` when the requested code or documentation change is complete and no known source-code blocker remains.
 
@@ -277,38 +275,45 @@ Do not withhold the completion token only because final project verification, co
 
 ## Important note about test execution
 
-Codex may attempt to run focused tests when it has command execution access.
+Codex must not run tests in this prompt.
 
-However, if Codex cannot run commands in the current environment, it must not pretend that tests passed.
+This rule exists because RALPH owns final verification after the orchestrator returns. It also avoids Windows/Codex subprocess environment failures, such as `[WinError 10106]`, from being mistaken for source-code test failures.
 
-If test execution is not available or fails because of an environment/subprocess problem, Codex must report:
-
-1. The exact command it tried or would run.
-2. Why it could not run or why it failed.
-3. Whether code changes were made.
-4. That host-side verification is still required.
-
-RALPH or the human operator owns the final verification command before committing, syncing, opening pull request drafts, or closing the GitHub issue.
-
-Recommended final verification command:
+Codex must not run:
 
 ```powershell
 poetry run pytest
 ```
 
-Fallback only if Poetry is unavailable:
+Codex must not run:
 
 ```powershell
 pytest
 ```
 
-Do not use:
+Codex must not run focused tests, full tests, or final project verification.
+
+Codex may read test files and may add or update tests when the selected issue requires a behavior proof.
+
+Codex may run only lightweight non-test inspection commands when command execution is available and safe, such as:
 
 ```powershell
-python -m pytest --capture=tee-sys
+git status --short
 ```
 
----
+```powershell
+git diff
+```
+
+At the end, Codex must report:
+
+1. Files changed.
+2. Tests run by Codex: no.
+3. Reason: RALPH owns final verification.
+4. Host-side verification required: yes.
+5. Commit: not created; RALPH owns commit creation.
+
+Do not claim tests passed unless RALPH or a human operator later runs them successfully outside this Codex step.
 
 ## Issue
 
@@ -371,9 +376,9 @@ Add or update a focused test only when behavior is missing
   ↓
 Make smallest source fix
   ↓
-Optionally attempt focused tests if available
+Do not run tests in Codex
   ↓
-Report verification honestly
+Report host-side verification is required
   ↓
 Do not commit
   ↓
@@ -398,8 +403,9 @@ Follow these rules:
 - Do not include `.env` contents or secret files in prompts, logs, commits, or output.
 - Do not scan huge folders.
 - Prefer configured commands from `setup_config.py` before guessing.
-- Use `poetry run pytest` first when tests can be run.
-- If Poetry is unavailable, use `pytest`.
+- Do not run `poetry run pytest` from Codex.
+- Do not run `pytest` from Codex.
+- RALPH owns final test execution after Codex returns.
 
 ---
 
@@ -566,45 +572,46 @@ Do not add dependencies.
 
 Do not rewrite unrelated modules.
 
-### Step 7: Optionally attempt focused tests if command execution is available
+### Step 7: Do not run test commands
 
-Run the smallest relevant pytest command only if command execution is available and the command can run safely in the current environment.
+Do not run focused tests.
 
-Example:
+Do not run full tests.
 
-```powershell
-poetry run pytest tests/<module>/test_<module>.py
-```
+Do not run final project verification.
 
-Or, for one test:
-
-```powershell
-poetry run pytest tests/<module>/test_<module>.py::test_name
-```
-
-If command execution is unavailable, say so clearly and list the exact command that should be run by RALPH or the human operator.
-
-If a test command fails because of an environment or subprocess problem, report the blocker honestly. Do not treat an environment-only test failure as proof that the source change is wrong.
-
-### Step 8: Do not run final verification unless explicitly safe
-
-RALPH owns final verification after the orchestrator returns.
-
-Codex may attempt full tests only when command execution is available and the environment is stable:
+Do not run:
 
 ```powershell
 poetry run pytest
 ```
 
-If Poetry is unavailable but pytest is available, Codex may attempt:
+Do not run:
 
 ```powershell
 pytest
 ```
 
-If full test execution is unavailable or fails because of an environment/subprocess problem, do not claim full tests passed.
+Codex may read tests and update tests when required by the selected issue, but RALPH owns all test execution after the orchestrator returns.
 
-Report the blocker and the exact command that still needs host-side verification.
+If the selected issue requires verification reporting, state that tests were not run by Codex and that host-side verification is required.
+
+### Step 8: Leave final verification to RALPH
+
+RALPH owns final verification after the orchestrator returns.
+
+Codex must not attempt the project's final verification command.
+
+Codex must report:
+
+```text
+Tests run by Codex: no
+Reason: RALPH owns final verification.
+Host-side verification required: yes
+Commit: not created; RALPH owns commit creation.
+```
+
+If Codex accidentally attempts a test command and it fails because of an environment or subprocess problem, report that honestly and do not treat the environment-only failure as proof that the source change is wrong.
 
 ### Step 9: Inspect changes
 
@@ -650,33 +657,20 @@ If tests fail because the source change is wrong, fix the source change before o
 
 ---
 
-## Test-command detection plan
+## Test-command detection note
 
-Use this only if the selected issue requires test-command detection or repository inspection.
+Codex must not use this prompt to run test commands.
 
-Configured command wins.
+If the selected issue requires discovering the configured verification command for reporting only, prefer configured values from `setup_config.py` before guessing.
 
-Recommended order:
+Recommended reporting order:
 
-1. If `setup_config.test_command` is non-empty:
-   - use that value,
-   - set source to `configured`.
+1. If `setup_config.test_command` is non-empty, report that as the host-side verification command.
+2. Else if `poetry.lock` and `tests/` exist, report that RALPH should use the Poetry-based project test command.
+3. Else if `tests/` exists, report that RALPH should use the project pytest command.
+4. Else report that the verification command is unknown.
 
-2. Else if `pyproject.toml` exists and `tests/` exists:
-   - if `poetry.lock` exists, infer `poetry run pytest`,
-   - set source to `inferred_from_poetry`.
-
-3. Else if `tests/` exists:
-   - infer `pytest`,
-   - set source to `inferred_from_tests_dir`.
-
-4. Else:
-   - use empty string,
-   - set source to `unknown`.
-
-Configured commands from `setup_config.py` should be preferred over guessed commands.
-
----
+Do not execute the detected command from Codex.
 
 ## Package-manager detection plan
 
@@ -719,38 +713,32 @@ Only list files after reading the issue and inspecting the project.
 
 ## Verification reporting
 
-At the end, report the real verification state.
-
-Use one of these forms.
-
-### If focused tests ran and passed
+At the end, report the real verification state in this form:
 
 ```text
-Focused test command: <command>
-Focused test result: passed
-Full test command: poetry run pytest
-Full test result: not run by Codex unless explicitly attempted
-Host-side verification required: yes, unless the full test command was actually run and passed
+Tests run by Codex: no
+Reason: RALPH owns final verification after the orchestrator returns.
+Host-side verification required: yes
 Commit: not created; RALPH owns commit creation
+Source change complete: yes or no
+Files changed:
+- <file path>
 ```
 
-### If tests could not run or failed for an environment/subprocess reason
+If Codex accidentally attempted a test command and it failed because of an environment or subprocess problem, report the blocker honestly in this form:
 
 ```text
-Focused test command: <command that was tried or should be run>
-Focused test result: not run or blocked
-Reason: <why command execution was unavailable or why the environment blocked it>
-Full test command: poetry run pytest
-Full test result: not run by Codex
+Tests run by Codex: attempted accidentally
+Blocked command: <command>
+Reason: <environment or subprocess blocker>
 Host-side verification required: yes
 Commit: not created; RALPH owns commit creation
 Source change complete: yes or no
 ```
 
-Do not say tests passed unless they actually passed.
-Do not create a commit from Codex.
+Do not say tests passed unless RALPH or the human operator later runs them successfully outside this Codex step.
 
----
+Do not create a commit from Codex.
 
 ## Acceptance criteria checklist
 
@@ -767,9 +755,9 @@ Codex must verify:
 - [ ] No new dependency was added unless the issue explicitly required it.
 - [ ] Existing public interface names were preserved unless the issue explicitly required a rename.
 - [ ] No `.env` or secret file content was read, printed, copied, committed, or exposed.
-- [ ] Focused tests were attempted if command execution was available and safe.
-- [ ] Full tests were attempted only if command execution was available and the environment was stable.
-- [ ] Test results and blockers were reported honestly.
+- [ ] No focused tests were run by Codex.
+- [ ] No full tests were run by Codex.
+- [ ] Host-side verification requirement was reported honestly.
 - [ ] No commit was created by Codex.
 - [ ] `<promise>COMPLETE</promise>` was output when the requested source or documentation change was complete and no known source-code blocker remained.
 
@@ -782,7 +770,7 @@ Codex is done only when:
 1. The selected issue is understood.
 2. The requested behavior is implemented.
 3. The behavior is covered by a focused test when appropriate.
-4. Test execution was attempted when available, or an honest testing blocker was reported.
+4. Test execution was not run by Codex, and host-side verification was reported as required.
 5. No unrelated files were intentionally changed.
 6. No secrets were exposed.
 7. No commit was created by Codex.
