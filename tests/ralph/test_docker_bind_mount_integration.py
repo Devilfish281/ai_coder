@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+import pytest
+
 import ai_coder.ralph.ralph as ralph_module
 import ai_coder.repository_context.repository_context as repository_context_module
 import ai_coder.sandbox_provider.sandbox_provider as sandbox_provider_module
@@ -23,6 +25,30 @@ DOCKER_TEST_BUILD_COMMAND = (
 )
 DOCKER_SECRET_NAME = "RALPH_DOCKER_SECRET_036"
 DOCKER_SECRET_VALUE = "super-secret-value-036"
+
+
+@pytest.fixture(autouse=True)
+def isolate_docker_bind_mount_tests_from_user_env(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_secret_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_secret_env_allowlist",
+        (),
+    )
 
 
 @dataclass(frozen=True)
@@ -614,8 +640,28 @@ def _configure_docker_mode(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         sandbox_provider_module.setup_config,
+        "provider_env_allowlist",
+        (),  #  Added Code
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
         "docker_secret_env_allowlist",
         (DOCKER_SECRET_NAME,),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_secret_env_allowlist",
+        (),  #  Added Code
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_env_allowlist",
+        (),  #  Added Code
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_secret_env_allowlist",
+        (),  #  Added Code
     )
     monkeypatch.setattr(
         ralph_module.setup_config,

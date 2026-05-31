@@ -1,41 +1,19 @@
 # tests/ralph/test_ralph.py
+import pytest
+
+import ai_coder.ralph.ralph as ralph_module
 from ai_coder.agent_provider import (
     COMPLETE_TOKEN,
+    NORMALIZED_EVENT_TYPE_TEXT,
     AgentProviderEvent,
     AgentResponse,
     MockAgentProvider,
-    NORMALIZED_EVENT_TYPE_TEXT,
 )
-
-from ai_coder.sync_out import SyncMergeResult
+from ai_coder.display import SilentDisplay
+from ai_coder.github_issues import GitHubIssue, GitHubIssueCloseResult
+from ai_coder.github_issues import github_issues as github_issues_module
+from ai_coder.project_setup import ProjectSetupResult
 from ai_coder.pull_request_draft import PullRequestDraftResult
-
-
-from ai_coder.github_issues import (
-    github_issues as github_issues_module,
-    GitHubIssue,
-    GitHubIssueCloseResult,
-)
-
-
-from ai_coder.repository_context import (
-    RepositoryContextResult,
-    RepositoryStartResult,
-)
-
-from ai_coder.sandbox_provider import (
-    CommandResult,
-    LocalSandboxProvider,
-    SandboxStartResult,
-)
-
-
-from ai_coder.ralph import i_ralph_run
-from ai_coder.display import (
-    SilentDisplay,
-)
-
-
 from ai_coder.ralph import (
     RALPH_RESULT_STATUSES,
     RALPH_STATUS_BLOCKED,
@@ -43,21 +21,38 @@ from ai_coder.ralph import (
     RALPH_STATUS_FAILED,
     RALPH_STATUS_INCOMPLETE,
     RALPH_STATUS_NO_CHANGES,
+    i_ralph_run,
 )
-
-from ai_coder.project_setup import ProjectSetupResult
-
+from ai_coder.repository_context import RepositoryContextResult, RepositoryStartResult
+from ai_coder.sandbox_provider import (
+    CommandResult,
+    LocalSandboxProvider,
+    SandboxStartResult,
+)
+from ai_coder.setup_config import c_setup_config
+from ai_coder.sync_out import SyncMergeResult
 from ai_coder.test_runner import TestRunResult
 from ai_coder.worktree_manager import WorktreeCleanupResult, WorktreeCreateResult
-
-import ai_coder.ralph.ralph as ralph_module
-from ai_coder.setup_config import c_setup_config
 
 
 def _refresh_ralph_config() -> None:
     c_setup_config._instance = None
     ralph_module.setup_config = c_setup_config.get_instance()
     ralph_module.logger = ralph_module.setup_config.get_logger()
+
+
+@pytest.fixture(autouse=True)
+def isolate_ralph_tests_from_user_provider_env(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        ralph_module.setup_config,
+        "provider_secret_env_allowlist",
+        (),
+    )
 
 
 def test_ralph_result_status_contract_lists_all_supported_statuses() -> None:

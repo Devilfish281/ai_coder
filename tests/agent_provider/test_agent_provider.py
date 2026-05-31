@@ -5,22 +5,19 @@ import pytest
 
 from ai_coder.agent_provider import (
     COMPLETE_TOKEN,
+    NORMALIZED_EVENT_TYPE_ERROR,
+    NORMALIZED_EVENT_TYPE_RESULT,
+    NORMALIZED_EVENT_TYPE_SESSION,
+    NORMALIZED_EVENT_TYPE_TEXT,
+    NORMALIZED_EVENT_TYPE_TOOL_CALL,
     AgentProviderEvent,
     AgentResponse,
     CodexProvider,
     FakeTestAgentProvider,
     MockAgentProvider,
     i_agent_provider_create,
-    NORMALIZED_EVENT_TYPE_ERROR,
-    NORMALIZED_EVENT_TYPE_RESULT,
-    NORMALIZED_EVENT_TYPE_SESSION,
-    NORMALIZED_EVENT_TYPE_TEXT,
-    NORMALIZED_EVENT_TYPE_TOOL_CALL,
 )
-
-
 from ai_coder.orchestrator import i_orchestrator_run
-
 from ai_coder.sandbox_provider import CommandResult
 
 
@@ -2193,3 +2190,81 @@ def test_codex_provider_explains_invalid_config_toml_feature_type(tmp_path):
     assert "value under [features] is not a boolean" in response.error
     assert 'Move web_search = "cached" out of [features]' in response.error
     assert "Original Codex error:" in response.error
+
+
+def test_codex_provider_custom_environment_includes_windows_base_environment(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("Path", r"C:\Windows\System32")
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+    monkeypatch.setenv("TEMP", r"C:\Users\ME\AppData\Local\Temp")
+    monkeypatch.setenv("TMP", r"C:\Users\ME\AppData\Local\Temp")
+    monkeypatch.setenv("USERPROFILE", r"C:\Users\ME")
+    monkeypatch.setenv("APPDATA", r"C:\Users\ME\AppData\Roaming")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\ME\AppData\Local")
+    monkeypatch.setenv("RALPH_PROVIDER_ALLOWED_ENV", "allowed value")
+    monkeypatch.setenv("RALPH_PROVIDER_UNALLOWED_ENV", "should not leak")
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex done\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+        provider_env_allowlist=("RALPH_PROVIDER_ALLOWED_ENV",),
+    )
+
+    result = provider.i_agent_provider_run("Fix issue with Codex.")
+
+    provider_environment = sandbox_handle.calls[0]["environment"]
+
+    assert result.error is None
+    assert provider_environment["Path"] == r"C:\Windows\System32"
+    assert provider_environment["SystemRoot"] == r"C:\Windows"
+    assert provider_environment["WINDIR"] == r"C:\Windows"
+    assert provider_environment["COMSPEC"] == r"C:\Windows\System32\cmd.exe"
+    assert provider_environment["RALPH_PROVIDER_ALLOWED_ENV"] == "allowed value"
+    assert "RALPH_PROVIDER_UNALLOWED_ENV" not in provider_environment
+
+
+def test_codex_provider_environment_lookup_is_case_insensitive(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("windir", r"C:\Windows")
+    monkeypatch.setenv("comspec", r"C:\Windows\System32\cmd.exe")
+    monkeypatch.setenv("RALPH_PROVIDER_ALLOWED_ENV", "allowed value")
+
+    sandbox_handle = FakeCodexSandboxHandle(
+        CommandResult(
+            stdout="Codex done\n<promise>COMPLETE</promise>",
+            stderr="",
+            exit_code=0,
+        )
+    )
+    provider = CodexProvider(
+        sandbox_handle=sandbox_handle,
+        codex_command="codex",
+        worktree_path=tmp_path,
+        final_output_path=tmp_path / "codex-last-message.md",
+        provider_env_allowlist=("RALPH_PROVIDER_ALLOWED_ENV",),
+    )
+
+    result = provider.i_agent_provider_run("Fix issue with Codex.")
+
+    provider_environment = sandbox_handle.calls[0]["environment"]
+
+    assert result.error is None
+    assert provider_environment["SystemRoot"] == r"C:\Windows"
+    assert provider_environment["WINDIR"] == r"C:\Windows"
+    assert provider_environment["COMSPEC"] == r"C:\Windows\System32\cmd.exe"

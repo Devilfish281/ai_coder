@@ -47,10 +47,15 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-
 from typing import Any, Iterable
 
-
+from ai_coder.agent_provider import (
+    COMPLETE_TOKEN,
+    AgentProvider,
+    i_agent_provider_create,
+)
+from ai_coder.codex_preflight import i_codex_preflight_check
+from ai_coder.completion_detector import i_completion_detector_detect
 from ai_coder.display import (
     DisplayProtocol,
     SilentDisplay,
@@ -59,55 +64,37 @@ from ai_coder.display import (
     i_display_command_failure,
     i_display_commit_result,
     i_display_github_automation_dry_run_summary,
+    i_display_issue_close_result,
     i_display_issue_skip_reasons,
     i_display_phase,
     i_display_pull_request_draft,
     i_display_selected_issue,
     i_display_test_result,
-    i_display_issue_close_result,
 )
-
-from ai_coder.codex_preflight import i_codex_preflight_check
-
-from ai_coder.pull_request_draft import (
-    PullRequestDraftResult,
-    i_pull_request_draft_build,
-)
-
-
-from ai_coder.agent_provider import (
-    AgentProvider,
-    COMPLETE_TOKEN,
-    i_agent_provider_create,
-)
-
-from ai_coder.completion_detector import i_completion_detector_detect
-
-
 from ai_coder.github_issues import (
     GitHubIssue,
+    GitHubIssueCloseResult,
     GitHubIssueReadError,
     i_github_issue_close,
     i_github_issue_from_file,
     i_github_issue_list,
     i_github_issue_select_actionable,
-    GitHubIssueCloseResult,
 )
-
-
+from ai_coder.my_utils.env_loader import load_dotenv_once
 from ai_coder.orchestrator import OrchestratorResult, i_orchestrator_run
+from ai_coder.project_setup import ProjectSetupResult, i_project_setup_run
 from ai_coder.prompt_preprocessor import i_prompt_preprocess
 from ai_coder.prompt_resolver import i_prompt_resolve
-
+from ai_coder.pull_request_draft import (
+    PullRequestDraftResult,
+    i_pull_request_draft_build,
+)
 from ai_coder.repository_context import (
     i_repository_context_discover,
     i_repository_start,
 )
-
-
 from ai_coder.sandbox_provider import i_sandbox_start
-
-
+from ai_coder.setup_config import c_setup_config
 from ai_coder.sync_out import SyncMergeResult, i_sync_out_merge
 from ai_coder.test_runner import TestRunResult, i_test_runner_run
 from ai_coder.worktree_manager import (
@@ -115,15 +102,6 @@ from ai_coder.worktree_manager import (
     i_worktree_cleanup,
     i_worktree_create,
 )
-
-from ai_coder.project_setup import (
-    ProjectSetupResult,
-    i_project_setup_run,
-)
-
-
-from ai_coder.setup_config import c_setup_config
-from ai_coder.my_utils.env_loader import load_dotenv_once
 
 load_dotenv_once()
 setup_config = c_setup_config.get_instance()
@@ -582,7 +560,7 @@ def i_ralph_run(
         )
 
     logger.info(
-        "Selected issue for prompt preprocessing: %s",
+        "Selected issue for prompt preprocessing: %s \n",
         f"#{selected_issue.number} - {selected_issue.title}",
     )
 
@@ -612,7 +590,9 @@ def i_ralph_run(
 
     #############################################
     # 7. Let the agent edit files, run commands, and commit changes.
+    logger.info("#" * 80 + "\n")
     logger.info("Step 7: Let the agent edit files, run commands, and commit changes.")
+    logger.info("#" * 80 + "\n")
     active_display.i_display_message(
         "Step 7: Let the agent edit files, run commands, and commit changes."
     )
@@ -659,6 +639,11 @@ def i_ralph_run(
     )
     # logger.info(f"Prompt given to agent: {prompt}")
 
+    logger.info(
+        "END Step 7: Agent finished. Moving on to completion detection, test running, and sync."
+    )
+    logger.info("#" * 80 + "\n")
+    logger.info("#" * 80 + "\n")
     #############################################
     # 8. Detect whether the task is complete.
     logger.info("Step 8: Detect whether the task is complete.")
@@ -1378,6 +1363,9 @@ def _build_master_prompt_template(
 
     :meta private:
     """
+    logger.info(
+        "_build_master_prompt_template: Combining inline prompt template with optional prompt file."
+    )
 
     base_prompt = i_prompt_resolve(inline_prompt=prompt_template)
 

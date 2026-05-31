@@ -3,15 +3,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
 import pytest
 
 import ai_coder.sandbox_provider.mount_utils as mount_utils_module
-from ai_coder.sandbox_provider.mount_utils import (
-    PARENT_GIT_SANDBOX_DIR,
-    SANDBOX_REPO_DIR,
-    i_mountutils_to_docker_host_path,
-)
-
 import ai_coder.sandbox_provider.sandbox_provider as sandbox_provider_module
 from ai_coder.sandbox_provider import (
     CommandResult,
@@ -20,6 +15,35 @@ from ai_coder.sandbox_provider import (
     LocalSandboxProvider,
     i_sandbox_start,
 )
+from ai_coder.sandbox_provider.mount_utils import (
+    PARENT_GIT_SANDBOX_DIR,
+    SANDBOX_REPO_DIR,
+    i_mountutils_to_docker_host_path,
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_sandbox_provider_config_from_user_env(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_env_allowlist",
+        ("PYTHONUNBUFFERED",),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "docker_secret_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_env_allowlist",
+        (),
+    )
+    monkeypatch.setattr(
+        sandbox_provider_module.setup_config,
+        "provider_secret_env_allowlist",
+        (),
+    )
 
 
 def test_command_result_success_state_is_consistent() -> None:
@@ -602,7 +626,7 @@ def test_docker_sandbox_provider_passes_stdin_text_to_docker_run(
         capture_output,
         text,
         check=False,
-        input="",  #  Added Code
+        input="",
     ):
         command_parts = list(command)
         commands.append(command_parts)

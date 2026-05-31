@@ -19,12 +19,23 @@ NORMALIZED_EVENT_TYPE_SESSION = "session"
 
 _PROVIDER_BASE_ENVIRONMENT_NAMES: tuple[str, ...] = (
     "PATH",
+    "Path",
     "PATHEXT",
     "SystemRoot",
+    "SYSTEMROOT",
+    "WINDIR",
+    "windir",
     "COMSPEC",
+    "ComSpec",
     "TEMP",
     "TMP",
     "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "SystemDrive",
+    "HOMEDRIVE",
+    "HOMEPATH",
 )
 
 
@@ -127,6 +138,24 @@ def _normalized_env_name_tuple(env_names: object) -> tuple[str, ...]:
     return tuple(normalized_names)
 
 
+def _environment_value_case_insensitive(
+    source_environment: Mapping[str, str],
+    env_name: str,
+) -> str | None:
+    """Return an environment value using Windows-safe case-insensitive lookup."""
+
+    if env_name in source_environment:
+        return source_environment[env_name]
+
+    lowered_env_name = env_name.casefold()
+
+    for source_name, source_value in source_environment.items():
+        if str(source_name).casefold() == lowered_env_name:
+            return source_value
+
+    return None
+
+
 def _copy_existing_environment_values(
     *,
     target_environment: dict[str, str],
@@ -134,7 +163,10 @@ def _copy_existing_environment_values(
     env_names: object,
 ) -> None:
     for env_name in _normalized_env_name_tuple(env_names):
-        env_value = source_environment.get(env_name)
+        env_value = _environment_value_case_insensitive(
+            source_environment=source_environment,
+            env_name=env_name,
+        )
 
         if env_value is None:
             continue
