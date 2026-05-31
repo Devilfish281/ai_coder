@@ -263,31 +263,32 @@ The job is to:
 1. Understand the selected GitHub issue.
 2. Find the smallest relevant project seam.
 3. Read the related tests and source code.
-4. Add or update a focused test when behavior is missing.
+4. Add or update a focused test only when behavior is missing.
 5. Make the smallest source change needed.
-6. Attempt to run tests if command execution is available.
+6. Optionally attempt focused tests if command execution is available.
 7. Report any testing blocker honestly.
-8. Commit only when changes are correct and test results are known.
-9. Output `<promise>COMPLETE</promise>` only when the issue is actually fixed.
+8. Do not commit changes. RALPH owns final testing, commit creation, sync, pull request draft behavior, and issue closing after the orchestrator returns.
+9. Output `<promise>COMPLETE</promise>` when the requested code or documentation change is complete and no known source-code blocker remains.
 
 Do not claim tests passed unless the test command was actually run and returned success.
+Do not withhold the completion token only because final project verification, commit creation, sync, pull request creation, or issue closing still belongs to RALPH.
 
 ---
 
 ## Important note about test execution
 
-Codex should attempt to run tests when it has command execution access.
+Codex may attempt to run focused tests when it has command execution access.
 
 However, if Codex cannot run commands in the current environment, it must not pretend that tests passed.
 
-If test execution is not available, Codex must report:
+If test execution is not available or fails because of an environment/subprocess problem, Codex must report:
 
 1. The exact command it tried or would run.
-2. Why it could not run.
+2. Why it could not run or why it failed.
 3. Whether code changes were made.
 4. That host-side verification is still required.
 
-RALPH or the human operator must run the final verification command before closing the GitHub issue.
+RALPH or the human operator owns the final verification command before committing, syncing, opening pull request drafts, or closing the GitHub issue.
 
 Recommended final verification command:
 
@@ -366,17 +367,17 @@ Read tests
   ↓
 Read source
   ↓
-Add or update a focused test
+Add or update a focused test only when behavior is missing
   ↓
 Make smallest source fix
   ↓
-Attempt focused tests
+Optionally attempt focused tests if available
   ↓
-Attempt full tests if available
+Report verification honestly
   ↓
-Commit when safe
+Do not commit
   ↓
-Output completion token
+Output completion token when the requested change is complete
 ```
 
 ---
@@ -419,6 +420,8 @@ orchestrator_result = i_orchestrator_run(
 Codex receives the selected issue inside the prompt.
 
 Codex must use that selected issue to decide what files to inspect and change.
+
+Codex must not create commits. RALPH runs final tests through the test-runner/sandbox seam and decides whether to commit after the orchestrator returns.
 
 ---
 
@@ -563,9 +566,9 @@ Do not add dependencies.
 
 Do not rewrite unrelated modules.
 
-### Step 7: Attempt focused tests if command execution is available
+### Step 7: Optionally attempt focused tests if command execution is available
 
-Run the smallest relevant pytest command.
+Run the smallest relevant pytest command only if command execution is available and the command can run safely in the current environment.
 
 Example:
 
@@ -581,21 +584,25 @@ poetry run pytest tests/<module>/test_<module>.py::test_name
 
 If command execution is unavailable, say so clearly and list the exact command that should be run by RALPH or the human operator.
 
-### Step 8: Attempt full tests if command execution is available
+If a test command fails because of an environment or subprocess problem, report the blocker honestly. Do not treat an environment-only test failure as proof that the source change is wrong.
 
-Run:
+### Step 8: Do not run final verification unless explicitly safe
+
+RALPH owns final verification after the orchestrator returns.
+
+Codex may attempt full tests only when command execution is available and the environment is stable:
 
 ```powershell
 poetry run pytest
 ```
 
-If Poetry is unavailable but pytest is available, run:
+If Poetry is unavailable but pytest is available, Codex may attempt:
 
 ```powershell
 pytest
 ```
 
-If full test execution is unavailable, do not claim full tests passed.
+If full test execution is unavailable or fails because of an environment/subprocess problem, do not claim full tests passed.
 
 Report the blocker and the exact command that still needs host-side verification.
 
@@ -610,38 +617,36 @@ git diff
 
 Confirm that only relevant files changed.
 
-Do not commit generated caches, logs, `.env` files, or unrelated files.
+Do not include generated caches, logs, `.env` files, or unrelated files in the intended change set.
 
-### Step 10: Commit when safe
+### Step 10: Do not commit
 
-Commit only when:
+Do not create a git commit.
 
-1. The issue fix is implemented.
-2. The changed files are relevant.
-3. Test status is known.
-4. There are no accidental secret or generated files staged.
+RALPH owns final verification, commit creation, sync, pull request draft behavior, and issue closing after the orchestrator returns.
 
-If Codex cannot run tests but is still allowed to commit in this environment, the commit message must say verification is pending.
+Codex should leave the worktree changed and report:
 
-If the project rules require tests to pass before commit and tests cannot be run, do not commit. Report the blocker instead.
-
-The commit message must start with:
-
-```text
-RALPH:
-```
+1. What files changed.
+2. What tests were attempted, if any.
+3. Whether any test command failed.
+4. Whether the requested source or documentation change is complete.
 
 ### Step 11: Final output
 
-Only output:
+Output:
 
 ```text
 <promise>COMPLETE</promise>
 ```
 
-when the issue is fixed and the required verification/commit conditions are satisfied.
+when the requested source or documentation change is complete and no known source-code blocker remains.
 
-If blocked, do not output the completion token.
+Do not withhold the completion token only because final project verification, commit creation, sync, pull request creation, or issue closing still belongs to RALPH.
+
+If tests were attempted and failed because of an environment or subprocess problem, report the test blocker honestly, then still output the completion token if the requested source or documentation change is complete.
+
+If tests fail because the source change is wrong, fix the source change before outputting the completion token.
 
 ---
 
@@ -718,29 +723,32 @@ At the end, report the real verification state.
 
 Use one of these forms.
 
-### If tests ran and passed
+### If focused tests ran and passed
 
 ```text
 Focused test command: <command>
 Focused test result: passed
 Full test command: poetry run pytest
-Full test result: passed
-Commit: <commit_hash>
+Full test result: not run by Codex unless explicitly attempted
+Host-side verification required: yes, unless the full test command was actually run and passed
+Commit: not created; RALPH owns commit creation
 ```
 
-### If tests could not run
+### If tests could not run or failed for an environment/subprocess reason
 
 ```text
-Focused test command: <command that should be run>
-Focused test result: not run
-Reason: <why command execution was unavailable>
+Focused test command: <command that was tried or should be run>
+Focused test result: not run or blocked
+Reason: <why command execution was unavailable or why the environment blocked it>
 Full test command: poetry run pytest
-Full test result: not run
+Full test result: not run by Codex
 Host-side verification required: yes
-Commit: <commit hash or not committed because tests could not run>
+Commit: not created; RALPH owns commit creation
+Source change complete: yes or no
 ```
 
 Do not say tests passed unless they actually passed.
+Do not create a commit from Codex.
 
 ---
 
@@ -759,28 +767,30 @@ Codex must verify:
 - [ ] No new dependency was added unless the issue explicitly required it.
 - [ ] Existing public interface names were preserved unless the issue explicitly required a rename.
 - [ ] No `.env` or secret file content was read, printed, copied, committed, or exposed.
-- [ ] Focused tests were attempted if command execution was available.
-- [ ] Full tests were attempted if command execution was available.
-- [ ] Test results were reported honestly.
-- [ ] Exactly one commit was created only if commit conditions were satisfied.
-- [ ] `<promise>COMPLETE</promise>` was output only when the issue was fixed and completion conditions were satisfied.
+- [ ] Focused tests were attempted if command execution was available and safe.
+- [ ] Full tests were attempted only if command execution was available and the environment was stable.
+- [ ] Test results and blockers were reported honestly.
+- [ ] No commit was created by Codex.
+- [ ] `<promise>COMPLETE</promise>` was output when the requested source or documentation change was complete and no known source-code blocker remained.
 
 ---
 
 ## Definition of done
 
-The issue is done only when:
+Codex is done only when:
 
 1. The selected issue is understood.
 2. The requested behavior is implemented.
 3. The behavior is covered by a focused test when appropriate.
-4. Test execution was attempted or an honest testing blocker was reported.
-5. The full project verification status is known.
-6. No unrelated files changed.
-7. No secrets were exposed.
-8. Commit rules were followed.
+4. Test execution was attempted when available, or an honest testing blocker was reported.
+5. No unrelated files were intentionally changed.
+6. No secrets were exposed.
+7. No commit was created by Codex.
+8. Codex reports whether host-side verification is still required.
 9. Codex outputs:
 
 ```text
 <promise>COMPLETE</promise>
 ```
+
+RALPH owns final project verification, commit creation, sync, pull request draft behavior, and issue closing after Codex returns.

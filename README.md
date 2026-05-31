@@ -1343,3 +1343,7 @@ Rules for future changes:
 ## License
 
 This project is part of the AI Code learning project.
+
+## scaffold command overwrites files only when --overwrite is passed.
+
+poetry run ai-coder scaffold --repo-path . --overwrite
