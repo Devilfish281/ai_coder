@@ -20,7 +20,7 @@ RALPH should eventually automate this workflow:
 4. Create a safe working copy using a Git worktree.
 5. Start a sandbox or local execution environment.
 6. Give an AI coding agent a prompt.
-7. Let the agent edit files, run commands, and commit changes.
+7. Let the agent edit files and report completion. RALPH owns final tests and commits..
 8. Detect whether the task is complete.
 9. Run tests.
 10. Sync or merge the finished work back to the host repo.
@@ -589,12 +589,14 @@ def i_ralph_run(
     )
 
     #############################################
-    # 7. Let the agent edit files, run commands, and commit changes.
+    # 7. Let the agent edit files and report completion. RALPH owns final tests and commits...
     logger.info("#" * 80 + "\n")
-    logger.info("Step 7: Let the agent edit files, run commands, and commit changes.")
+    logger.info(
+        "Step 7: Let the agent edit files and report completion. RALPH owns final tests and commits..."
+    )
     logger.info("#" * 80 + "\n")
     active_display.i_display_message(
-        "Step 7: Let the agent edit files, run commands, and commit changes."
+        "Step 7: Let the agent edit files and report completion. RALPH owns final tests and commits..."
     )
 
     orchestrator_result = i_orchestrator_run(
@@ -685,7 +687,9 @@ def i_ralph_run(
 
     #############################################
     # 10. Sync or merge the finished work back to the host repo.
-    logger.info("Step 10: Sync or merge the finished work back to the host repo.")
+    logger.info(
+        "Step 10: Save Codex's finished changes into worktree branch Git, but only after RALPH confirms completion and tests pass.."
+    )
     active_display.i_display_message(
         "Step 10: Sync or merge the finished work back to the host repo."
     )
