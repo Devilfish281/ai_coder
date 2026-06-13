@@ -397,7 +397,8 @@ def i_ralph_run(
         + "\n"
         + "Step 4: Create a safe working copy using a Git worktree."
         + "\n"
-        "#" * 80 + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message(
         "Step 4: Create a safe working copy using a Git worktree."
@@ -432,7 +433,8 @@ def i_ralph_run(
         + "\n"
         + "Step 5: Start a sandbox or local execution environment."
         + "\n"
-        "#" * 80 + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message(
         "Step 5: Start a sandbox or local execution environment."
@@ -483,7 +485,8 @@ def i_ralph_run(
         + "\n"
         + "Step 5a: Detect Poetry, run poetry install, run poetry run pytest."
         + "\n"
-        "#" * 80 + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message(
         "Step 5a: Detect Poetry, run poetry install, run poetry run pytest."
