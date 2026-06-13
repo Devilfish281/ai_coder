@@ -539,8 +539,12 @@ def i_ralph_run(
     #############################################
     # 5b. Discover prompt-safe repository context.
     logger.info(
-        "#" * 80 + "\n" + "Step 5b: Discover prompt-safe repository context." + "\n"
-        "#" * 80 + "\n"
+        "#" * 80
+        + "\n"
+        + "Step 5b: Discover prompt-safe repository context."
+        + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message(
         "Step 5b: Discover prompt-safe repository context."
@@ -555,8 +559,12 @@ def i_ralph_run(
     #############################################
     # 6. Give an AI coding agent a prompt.
     logger.info(
-        "#" * 80 + "\n" + "Step 6: Give an AI coding agent a prompt." + "\n"
-        "#" * 80 + "\n"
+        "#" * 80
+        + "\n"
+        + "Step 6: Give an AI coding agent a prompt."
+        + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message("Step 6: Give an AI coding agent a prompt.")
     i_display_phase(active_display, "prompt")
@@ -581,8 +589,12 @@ def i_ralph_run(
     #############################################
     # 6b. Preprocess prompt after sandbox is ready.
     logger.info(
-        "#" * 80 + "\n" + "Step 6b: Preprocess prompt after sandbox is ready." + "\n"
-        "#" * 80 + "\n"
+        "#" * 80
+        + "\n"
+        + "Step 6b: Preprocess prompt after sandbox is ready."
+        + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message(
         "Step 6b: Preprocess prompt after sandbox is ready."
