@@ -263,7 +263,12 @@ def i_ralph_run(
     #############################################
     # 1. Start with a Git repository.
     logger.info(
-        "#" * 80 + "\n" + "Step 1: Start with a Git repository." + "\n" "#" * 80 + "\n"
+        "#" * 80
+        + "\n"
+        + "Step 1: Start with a Git repository."
+        + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message("Step 1: Start with a Git repository.")
     i_display_phase(active_display, "setup")
@@ -311,11 +316,11 @@ def i_ralph_run(
                 status=RALPH_STATUS_BLOCKED,
             )
 
-    logger.info("#" * 80 + "\n" + "Step 1: Done." + "\n" "#" * 80 + "\n")
+    logger.info("#" * 80 + "\n" + "Step 1: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 2. Read open GitHub issues.
     logger.info(
-        "#" * 80 + "\n" + "Step 2: Read open GitHub issues." + "\n" "#" * 80 + "\n"
+        "#" * 80 + "\n" + "Step 2: Read open GitHub issues." + "\n" + "#" * 80 + "\n"
     )
     active_display.i_display_message("Step 2: Read open GitHub issues.")
 
@@ -347,11 +352,11 @@ def i_ralph_run(
     logger.info(f"Issue body lengths: {[len(issue.body) for issue in resolved_issues]}")
     logger.info(f"Issue blocked_by: {[issue.blocked_by for issue in resolved_issues]}")
 
-    logger.info("#" * 80 + "\n" + "Step 2: Done." + "\n" "#" * 80 + "\n")
+    logger.info("#" * 80 + "\n" + "Step 2: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 3. Pick one actionable issue.
     logger.info(
-        "#" * 80 + "\n" + "Step 3: Pick one actionable issue." + "\n" "#" * 80 + "\n"
+        "#" * 80 + "\n" + "Step 3: Pick one actionable issue." + "\n" + "#" * 80 + "\n"
     )
     active_display.i_display_message("Step 3: Pick one actionable issue.")
 
@@ -384,7 +389,7 @@ def i_ralph_run(
         issue_title=selected_issue.title,
     )
 
-    logger.info("#" * 80 + "\n" + "Step 3: Done." + "\n" "#" * 80 + "\n")
+    logger.info("#" * 80 + "\n" + "Step 3: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 4. Create a safe working copy using a Git worktree.
     logger.info(
@@ -419,7 +424,7 @@ def i_ralph_run(
             status="blocked",
         )
 
-    logger.info("#" * 80 + "\n" + "Step 4: Done." + "\n" "#" * 80 + "\n")
+    logger.info("#" * 80 + "\n" + "Step 4: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 5. Start a sandbox or local execution environment.
     logger.info(
@@ -470,7 +475,7 @@ def i_ralph_run(
             status="blocked",
             cleanup_result=cleanup_result,
         )
-    logger.info("#" * 80 + "\n" + "Step 5: Done." + "\n" "#" * 80 + "\n")
+    logger.info("#" * 80 + "\n" + "Step 5: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 5a. Detect Poetry, run poetry install, run poetry run pytest.
     logger.info(
@@ -527,7 +532,7 @@ def i_ralph_run(
             cleanup_result=cleanup_result,
         )
 
-    logger.info("#" * 80 + "\n" + "Step 5a: Done." + "\n" "#" * 80 + "\n")
+    logger.info("#" * 80 + "\n" + "Step 5a: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 5b. Discover prompt-safe repository context.
     logger.info(
@@ -543,7 +548,7 @@ def i_ralph_run(
     )
 
     logger.info(repository_context_result.prompt_summary)
-    logger.info("#" * 80 + "\n" + "Step 5b: Done." + "\n" "#" * 80 + "\n")
+    logger.info("#" * 80 + "\n" + "Step 5b: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 6. Give an AI coding agent a prompt.
     logger.info(
