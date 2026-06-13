@@ -262,7 +262,9 @@ def i_ralph_run(
 
     #############################################
     # 1. Start with a Git repository.
-    logger.info("Step 1: Start with a Git repository.")
+    logger.info(
+        "#" * 80 + "\n" + "Step 1: Start with a Git repository." + "\n" "#" * 80 + "\n"
+    )
     active_display.i_display_message("Step 1: Start with a Git repository.")
     i_display_phase(active_display, "setup")
 
@@ -309,9 +311,12 @@ def i_ralph_run(
                 status=RALPH_STATUS_BLOCKED,
             )
 
+    logger.info("#" * 80 + "\n" + "Step 1: Done." + "\n" "#" * 80 + "\n")
     #############################################
     # 2. Read open GitHub issues.
-    logger.info("Step 2: Read open GitHub issues.")
+    logger.info(
+        "#" * 80 + "\n" + "Step 2: Read open GitHub issues." + "\n" "#" * 80 + "\n"
+    )
     active_display.i_display_message("Step 2: Read open GitHub issues.")
 
     try:
@@ -342,9 +347,12 @@ def i_ralph_run(
     logger.info(f"Issue body lengths: {[len(issue.body) for issue in resolved_issues]}")
     logger.info(f"Issue blocked_by: {[issue.blocked_by for issue in resolved_issues]}")
 
+    logger.info("#" * 80 + "\n" + "Step 2: Done." + "\n" "#" * 80 + "\n")
     #############################################
     # 3. Pick one actionable issue.
-    logger.info("Step 3: Pick one actionable issue.")
+    logger.info(
+        "#" * 80 + "\n" + "Step 3: Pick one actionable issue." + "\n" "#" * 80 + "\n"
+    )
     active_display.i_display_message("Step 3: Pick one actionable issue.")
 
     selection_result = i_github_issue_select_actionable(resolved_issues)
@@ -376,9 +384,16 @@ def i_ralph_run(
         issue_title=selected_issue.title,
     )
 
+    logger.info("#" * 80 + "\n" + "Step 3: Done." + "\n" "#" * 80 + "\n")
     #############################################
     # 4. Create a safe working copy using a Git worktree.
-    logger.info("Step 4: Create a safe working copy using a Git worktree.")
+    logger.info(
+        "#" * 80
+        + "\n"
+        + "Step 4: Create a safe working copy using a Git worktree."
+        + "\n"
+        "#" * 80 + "\n"
+    )
     active_display.i_display_message(
         "Step 4: Create a safe working copy using a Git worktree."
     )
@@ -404,9 +419,16 @@ def i_ralph_run(
             status="blocked",
         )
 
+    logger.info("#" * 80 + "\n" + "Step 4: Done." + "\n" "#" * 80 + "\n")
     #############################################
     # 5. Start a sandbox or local execution environment.
-    logger.info("Step 5: Start a sandbox or local execution environment.")
+    logger.info(
+        "#" * 80
+        + "\n"
+        + "Step 5: Start a sandbox or local execution environment."
+        + "\n"
+        "#" * 80 + "\n"
+    )
     active_display.i_display_message(
         "Step 5: Start a sandbox or local execution environment."
     )
@@ -448,10 +470,16 @@ def i_ralph_run(
             status="blocked",
             cleanup_result=cleanup_result,
         )
-
+    logger.info("#" * 80 + "\n" + "Step 5: Done." + "\n" "#" * 80 + "\n")
     #############################################
     # 5a. Detect Poetry, run poetry install, run poetry run pytest.
-    logger.info("Step 5a: Detect Poetry, run poetry install, run poetry run pytest.")
+    logger.info(
+        "#" * 80
+        + "\n"
+        + "Step 5a: Detect Poetry, run poetry install, run poetry run pytest."
+        + "\n"
+        "#" * 80 + "\n"
+    )
     active_display.i_display_message(
         "Step 5a: Detect Poetry, run poetry install, run poetry run pytest."
     )
@@ -499,9 +527,13 @@ def i_ralph_run(
             cleanup_result=cleanup_result,
         )
 
+    logger.info("#" * 80 + "\n" + "Step 5a: Done." + "\n" "#" * 80 + "\n")
     #############################################
     # 5b. Discover prompt-safe repository context.
-    logger.info("Step 5b: Discover prompt-safe repository context.")
+    logger.info(
+        "#" * 80 + "\n" + "Step 5b: Discover prompt-safe repository context." + "\n"
+        "#" * 80 + "\n"
+    )
     active_display.i_display_message(
         "Step 5b: Discover prompt-safe repository context."
     )
@@ -511,10 +543,13 @@ def i_ralph_run(
     )
 
     logger.info(repository_context_result.prompt_summary)
-
+    logger.info("#" * 80 + "\n" + "Step 5b: Done." + "\n" "#" * 80 + "\n")
     #############################################
     # 6. Give an AI coding agent a prompt.
-    logger.info("Step 6: Give an AI coding agent a prompt.")
+    logger.info(
+        "#" * 80 + "\n" + "Step 6: Give an AI coding agent a prompt." + "\n"
+        "#" * 80 + "\n"
+    )
     active_display.i_display_message("Step 6: Give an AI coding agent a prompt.")
     i_display_phase(active_display, "prompt")
     #############################################
@@ -534,9 +569,13 @@ def i_ralph_run(
         f"Prompt template length: {len(raw_prompt_template)}"
     )
 
+    logger.info("#" * 80 + "\n" + "Step 6a: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 6b. Preprocess prompt after sandbox is ready.
-    logger.info("Step 6b: Preprocess prompt after sandbox is ready.")
+    logger.info(
+        "#" * 80 + "\n" + "Step 6b: Preprocess prompt after sandbox is ready." + "\n"
+        "#" * 80 + "\n"
+    )
     active_display.i_display_message(
         "Step 6b: Preprocess prompt after sandbox is ready."
     )
@@ -588,13 +627,18 @@ def i_ralph_run(
         f"Agent provider: {selected_agent_provider.__class__.__name__}"
     )
 
+    logger.info("#" * 80 + "\n" + "Step 6b: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 7. Let the agent edit files and report completion. RALPH owns final tests and commits...
-    logger.info("#" * 80 + "\n")
     logger.info(
-        "Step 7: Let the agent edit files and report completion. RALPH owns final tests and commits..."
+        "#" * 80
+        + "\n"
+        + "Step 7: Let the agent edit files and report completion. RALPH owns final tests and commits..."
+        + "\n"
+        + "#" * 80
+        + "\n"
     )
-    logger.info("#" * 80 + "\n")
+
     active_display.i_display_message(
         "Step 7: Let the agent edit files and report completion. RALPH owns final tests and commits..."
     )
@@ -644,20 +688,28 @@ def i_ralph_run(
     logger.info(
         "END Step 7: Agent finished. Moving on to completion detection, test running, and sync."
     )
-    logger.info("#" * 80 + "\n")
-    logger.info("#" * 80 + "\n")
+
+    logger.info("#" * 80 + "\n" + "Step 7: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 8. Detect whether the task is complete.
-    logger.info("Step 8: Detect whether the task is complete.")
+    logger.info(
+        "#" * 80
+        + "\n"
+        + "Step 8: Detect whether the task is complete."
+        + "\n"
+        + "#" * 80
+        + "\n"
+    )
     active_display.i_display_message("Step 8: Detect whether the task is complete.")
     completion_result = i_completion_detector_detect(orchestrator_result.final_output)
 
     logger.info(completion_result.message)
     active_display.i_display_message(completion_result.message)
 
+    logger.info("#" * 80 + "\n" + "Step 8: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 9. Run tests.
-    logger.info("Step 9: Run tests.")
+    logger.info("#" * 80 + "\n" + "Step 9: Run tests." + "\n" + "#" * 80 + "\n")
     active_display.i_display_message("Step 9: Run tests.")
     i_display_phase(active_display, "tests")
 
@@ -685,10 +737,17 @@ def i_ralph_run(
         exit_code=test_result.exit_code,
     )
 
+    logger.info("#" * 80 + "\n" + "Step 9: Done." + "\n" + "#" * 80 + "\n")
+
     #############################################
     # 10. Sync or merge the finished work back to the host repo.
     logger.info(
-        "Step 10: Save Codex's finished changes into worktree branch Git, but only after RALPH confirms completion and tests pass.."
+        "#" * 80
+        + "\n"
+        + "Step 10: Save Codex's finished changes into worktree branch Git, but only after RALPH confirms completion and tests pass.."
+        + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message(
         "Step 10: Sync or merge the finished work back to the host repo."
@@ -734,10 +793,17 @@ def i_ralph_run(
         True if sync_result and sync_result.has_uncommitted_changes else None
     )
 
+    logger.info("#" * 80 + "\n" + "Step 10: Done." + "\n" + "#" * 80 + "\n")
+
     #############################################
     # 11. Close the GitHub issue only after tests pass and the fix is committed.
     logger.info(
-        "Step 11: Close the GitHub issue only after tests pass and the fix is committed."
+        "#" * 80
+        + "\n"
+        + "Step 11: Close the GitHub issue only after tests pass and the fix is committed."
+        + "\n"
+        + "#" * 80
+        + "\n"
     )
     active_display.i_display_message(
         "Step 11: Close the GitHub issue only after tests pass and the fix is committed."
@@ -812,9 +878,17 @@ def i_ralph_run(
         dry_run=setup_config.dry_run,
     )
 
+    logger.info("#" * 80 + "\n" + "Step 11: Done." + "\n" + "#" * 80 + "\n")
     #############################################
     # 12. Preserve the worktree if there are uncommitted changes or a failure.
-    logger.info("Step 12: Preserve or clean up the worktree based on final run state.")
+    logger.info(
+        "#" * 80
+        + "\n"
+        + "Step 12: Preserve or clean up the worktree based on final run state."
+        + "\n"
+        + "#" * 80
+        + "\n"
+    )
 
     active_display.i_display_message(
         "Step 12: Preserve or clean up the worktree based on final run state."
@@ -883,9 +957,11 @@ def i_ralph_run(
     logger.info(f"Completion detected: {completion_result.completed}")
     logger.info(f"Message: {message_result}")
 
+    logger.info("#" * 80 + "\n" + "Step 12: Done." + "\n" + "#" * 80 + "\n")
     ###########################################################################
     # Final normal return
     ###########################################################################
+    logger.info("RALPH run complete. Returning final result.")
     return RalphResult(
         selected_issue=selected_issue,
         prompt=prompt,
